@@ -8,7 +8,9 @@ use tokio::sync::OnceCell;
 use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
+mod activity;
 mod command;
+mod event;
 
 #[derive(Default)]
 struct Handler {

@@ -178,8 +178,10 @@ name = "failsafe"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dotenv",
  "lazy_static",
+ "serde",
  "serenity",
  "tokio",
  "tracing",
