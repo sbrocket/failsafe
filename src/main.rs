@@ -1,14 +1,55 @@
-use serenity::{async_trait, model::gateway::Ready, prelude::*};
-use tracing::{debug, info};
+use command::CommandManager;
+use serenity::{
+    async_trait,
+    model::{gateway::Ready, id::GuildId, interactions::Interaction},
+    prelude::*,
+};
+use tokio::sync::OnceCell;
+use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-struct Handler;
+mod command;
+
+#[derive(Default)]
+struct Handler {
+    command_manager: OnceCell<CommandManager>,
+}
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, _ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
         debug!("Ready data: {:#?}", ready);
+    }
+
+    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
+        debug!("Cache ready! Guilds = {:?}", guilds);
+
+        assert!(guilds.len() == 1, "Expected bot to be in a single guild");
+        let guild = guilds.first().unwrap();
+
+        // TODO: Unclear whether this should be initialized in ready or cache_ready or if it
+        // matters.
+        self.command_manager
+            .get_or_try_init(|| CommandManager::new(&ctx, guild))
+            .await
+            .expect("Failed to create CommandManager");
+    }
+
+    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        let command_manager = match self.command_manager.get() {
+            Some(mgr) => mgr,
+            None => {
+                error!("Interaction created before CommandManager created!");
+                return;
+            }
+        };
+        if let Err(err) = command_manager
+            .dispatch_interaction(&ctx, interaction)
+            .await
+        {
+            error!("Error dispatching interaction: {}", err);
+        }
     }
 }
 
@@ -25,8 +66,14 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber).expect("Failed to start the logger");
 
     let token = std::env::var("DISCORD_BOT_TOKEN").expect("Missing $DISCORD_BOT_TOKEN");
+    let app_id = std::env::var("DISCORD_APP_ID")
+        .expect("Missing DISCORD_APP_ID")
+        .parse()
+        .expect("DISCORD_APP_ID not a valid u64");
+
     let mut client = Client::builder(&token)
-        .event_handler(Handler)
+        .application_id(app_id)
+        .event_handler(Handler::default())
         .await
         .expect("Error creating client");
 

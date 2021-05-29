@@ -5,12 +5,17 @@ authors = ["Bryan Henry <bryanhenry522@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+anyhow = "1.0.40"
 dotenv = "0.15.0"
+lazy_static = "1.4.0"
 tokio = { version = "1.6", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.2.0"
 
 [dependencies.serenity]
 default-features = false
-features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend" ]
-version = "0.10.7"
+features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend", "unstable_discord_api" ]
+# Temporarily build from own fork with not-yet-merged PRs applied
+#version = "0.10.7"
+git = "https://github.com/sbrocket/serenity.git"
+rev = "1191a2489f644c76aef22974a103d98385768f63"

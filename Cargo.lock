@@ -16,6 +16,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.40"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28b2cd92db5cbd74e8e5028f7e27dd7aa3090e89e4f2a197cc7c8dfb69c7063b"
+
+[[package]]
 name = "async-trait"
 version = "0.1.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -171,7 +177,9 @@ dependencies = [
 name = "failsafe"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dotenv",
+ "lazy_static",
  "serenity",
  "tokio",
  "tracing",
@@ -932,8 +940,7 @@ dependencies = [
 [[package]]
 name = "serenity"
 version = "0.10.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7775b6c4a554e495372cfa5d0e70349c84c62415666cf80c1ea79bc447c78d9"
+source = "git+https://github.com/sbrocket/serenity.git?rev=1191a2489f644c76aef22974a103d98385768f63#1191a2489f644c76aef22974a103d98385768f63"
 dependencies = [
  "async-trait",
  "async-tungstenite",
