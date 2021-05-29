@@ -1,8 +1,7 @@
-use super::Command;
+use super::{Command, CommandOption};
 use anyhow::Result;
 use serenity::{
     async_trait,
-    builder::CreateApplicationCommand,
     client::Context,
     model::interactions::{Interaction, InteractionResponseType},
 };
@@ -15,11 +14,12 @@ impl Command for Ping {
         "ping"
     }
 
-    fn create_command<'a>(
-        &self,
-        builder: &'a mut CreateApplicationCommand,
-    ) -> &'a mut CreateApplicationCommand {
-        builder.name(self.name()).description("A ping command")
+    fn description(&self) -> &'static str {
+        "A ping command"
+    }
+
+    fn options(&self) -> Vec<CommandOption> {
+        vec![]
     }
 
     async fn handle_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()> {
