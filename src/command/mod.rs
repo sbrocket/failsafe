@@ -119,11 +119,7 @@ impl CommandManager {
             .set_application_commands(&ctx, |commands| {
                 let app_commands = COMMANDS
                     .iter()
-                    .map(|(_, command)| {
-                        let mut builder = CreateApplicationCommand::default();
-                        command.build(&mut builder);
-                        builder
-                    })
+                    .map(|(_, command)| command.build())
                     .collect();
                 commands.set_application_commands(app_commands)
             })
@@ -230,7 +226,8 @@ impl CommandManager {
 }
 
 impl dyn Command + '_ {
-    fn build(&self, builder: &mut CreateApplicationCommand) {
+    fn build(&self) -> CreateApplicationCommand {
+        let mut command = CreateApplicationCommand::default();
         let options = match self.command_type() {
             CommandType::Leaf(leaf) => leaf.build_options(),
             CommandType::Subcommands(cmds) => {
@@ -243,10 +240,11 @@ impl dyn Command + '_ {
                     .collect()
             }
         };
-        builder
+        command
             .name(self.name())
             .description(self.description())
             .set_options(options);
+        command
     }
 
     fn build_subcommand_group(&self) -> CreateApplicationCommandOption {
@@ -289,29 +287,26 @@ impl dyn LeafCommand + '_ {
         assert!(self.options().len() <= 25);
         self.options()
             .into_iter()
-            .map(|option| {
-                let mut builder = CreateApplicationCommandOption::default();
-                option.build(&mut builder);
-                builder
-            })
+            .map(|option| option.build())
             .collect()
     }
 }
 
 impl CommandOption {
-    fn build(self, builder: &mut CreateApplicationCommandOption) {
+    fn build(self) -> CreateApplicationCommandOption {
+        let mut option = CreateApplicationCommandOption::default();
         let kind = self.option_type.api_type();
         match self.option_type {
             OptionType::String(choices) => {
                 assert!(choices.len() <= 25);
                 choices.into_iter().for_each(|(name, value)| {
-                    builder.add_string_choice(name, value);
+                    option.add_string_choice(name, value);
                 })
             }
             OptionType::Integer(choices) => {
                 assert!(choices.len() <= 25);
                 choices.into_iter().for_each(|(name, value)| {
-                    builder.add_int_choice(name, value);
+                    option.add_int_choice(name, value);
                 })
             }
             OptionType::Boolean
@@ -320,10 +315,11 @@ impl CommandOption {
             | OptionType::Role
             | OptionType::Mentionable => {}
         };
-        builder
+        option
             .kind(kind)
             .name(self.name)
             .description(self.description)
             .required(self.required);
+        option
     }
 }
