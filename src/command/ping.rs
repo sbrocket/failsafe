@@ -1,4 +1,4 @@
-use super::{Command, CommandOption, CommandType, LeafCommand};
+use super::{CommandOption, LeafCommand};
 use anyhow::Result;
 use serenity::{
     async_trait,
@@ -6,21 +6,7 @@ use serenity::{
     model::interactions::{Interaction, InteractionResponseType},
 };
 
-pub struct Ping;
-
-impl Command for Ping {
-    fn name(&self) -> &'static str {
-        "ping"
-    }
-
-    fn description(&self) -> &'static str {
-        "A ping command"
-    }
-
-    fn command_type(&self) -> CommandType {
-        CommandType::Leaf(self as &dyn LeafCommand)
-    }
-}
+define_command!(Ping, "ping", "A ping command", Leaf);
 
 #[async_trait]
 impl LeafCommand for Ping {

@@ -14,10 +14,13 @@ use serenity::{
 };
 use std::collections::BTreeMap;
 
+#[macro_use]
+mod macros;
+
 mod ping;
 
 /// Generic trait that all command types implement.
-trait Command: Send + Sync {
+pub trait Command: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn description(&self) -> &'static str;
@@ -25,11 +28,11 @@ trait Command: Send + Sync {
     fn command_type(&self) -> CommandType;
 }
 
-type SubcommandsMap = BTreeMap<&'static str, Box<dyn LeafCommand>>;
-type SubcommandGroupsMap = BTreeMap<&'static str, Box<dyn SubcommandGroup>>;
+pub type SubcommandsMap = BTreeMap<&'static str, Box<dyn LeafCommand>>;
+pub type SubcommandGroupsMap = BTreeMap<&'static str, Box<dyn SubcommandGroup>>;
 
 /// Type of the command, which differs depending on the number of nested layers.
-enum CommandType<'a> {
+pub enum CommandType<'a> {
     /// A leaf command that handles user interactions.
     Leaf(&'a dyn LeafCommand),
     /// A top level command that contains subcommands, i.e. a single layer of nesting.
@@ -39,7 +42,7 @@ enum CommandType<'a> {
 }
 
 /// A subcommand group is a command that contains leaf (sub)commands.
-trait SubcommandGroup: Command {
+pub trait SubcommandGroup: Command {
     /// The subcommands contained in this group. Can only be leaf commands; no further nesting is
     /// allowed.
     fn subcommands(&self) -> &SubcommandsMap;
@@ -48,7 +51,7 @@ trait SubcommandGroup: Command {
 /// A leaf command, i.e. one that does not contain any Subcommand or SubcommandGroup options and
 /// that handles user interactions.
 #[async_trait]
-trait LeafCommand: Command {
+pub trait LeafCommand: Command {
     /// Commands can have [0,25] options.
     fn options(&self) -> Vec<CommandOption>;
 
@@ -56,7 +59,7 @@ trait LeafCommand: Command {
 }
 
 /// Definition of a single command option.
-struct CommandOption {
+pub struct CommandOption {
     name: String,
     description: String,
     required: bool,
@@ -64,7 +67,7 @@ struct CommandOption {
 }
 
 /// The type for a CommandOption, including any choices if the type supports them.
-enum OptionType {
+pub enum OptionType {
     /// String options can have [0,25] choices.
     String(Vec<(String, String)>),
     /// Integer options can have [0,25] choices.
@@ -94,7 +97,7 @@ lazy_static! {
     /// List of all known commands; add new commands here as they're created.
     static ref COMMANDS: BTreeMap<&'static str, Box<dyn Command>> = {
         vec![
-            Box::new(ping::Ping) as Box<dyn Command>,
+            Box::new(ping::Ping::new()) as Box<dyn Command>,
         ].into_iter().map(|c| (c.name(), c)).collect()
     };
 }
