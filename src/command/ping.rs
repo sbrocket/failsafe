@@ -1,5 +1,6 @@
 use super::{CommandOption, LeafCommand};
-use anyhow::{format_err, Result};
+use crate::util::InteractionExt;
+use anyhow::Result;
 use serenity::{
     async_trait,
     client::Context,
@@ -16,11 +17,7 @@ impl LeafCommand for Ping {
     }
 
     async fn handle_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()> {
-        let user = interaction
-            .member
-            .as_ref()
-            .map(|m| m.user.id)
-            .ok_or(format_err!("Interaction from nowhere?! {:?}", &interaction))?;
+        let user = interaction.get_user_id()?;
         interaction
             .create_interaction_response(&ctx, |resp| {
                 let message = MessageBuilder::new()

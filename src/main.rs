@@ -11,6 +11,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 mod activity;
 mod command;
 mod event;
+mod util;
 
 #[derive(Default)]
 struct Handler {

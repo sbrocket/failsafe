@@ -1,6 +1,12 @@
 use super::{CommandOption, LeafCommand};
+use crate::util::InteractionExt;
 use anyhow::Result;
-use serenity::{async_trait, client::Context, model::interactions::Interaction};
+use serenity::{
+    async_trait,
+    client::Context,
+    model::interactions::{Interaction, InteractionResponseType},
+    utils::MessageBuilder,
+};
 
 define_command!(Lfg, "lfg", "Command for interacting with scheduled events", Subcommands: [LfgJoin, LfgCreate]);
 define_command!(LfgJoin, "join", "Join an existing event", Leaf);
@@ -13,7 +19,19 @@ impl LeafCommand for LfgJoin {
     }
 
     async fn handle_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()> {
-        todo!()
+        let user = interaction.get_user_id()?;
+        interaction
+            .create_interaction_response(&ctx, |resp| {
+                let message = MessageBuilder::new()
+                    .push("Hi ")
+                    .mention(&user)
+                    .push("! There's no events to join yet...because I can't create them yet...")
+                    .build();
+                resp.kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|msg| msg.content(message))
+            })
+            .await?;
+        Ok(())
     }
 }
 
@@ -24,6 +42,18 @@ impl LeafCommand for LfgCreate {
     }
 
     async fn handle_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()> {
-        todo!()
+        let user = interaction.get_user_id()?;
+        interaction
+            .create_interaction_response(&ctx, |resp| {
+                let message = MessageBuilder::new()
+                    .push("Hi ")
+                    .mention(&user)
+                    .push("! I'll be able to create events soon...")
+                    .build();
+                resp.kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|msg| msg.content(message))
+            })
+            .await?;
+        Ok(())
     }
 }

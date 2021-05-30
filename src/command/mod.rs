@@ -100,6 +100,7 @@ lazy_static! {
     static ref COMMANDS: BTreeMap<&'static str, Box<dyn Command>> = {
         vec![
             Box::new(ping::Ping::new()) as Box<dyn Command>,
+            Box::new(lfg::Lfg::new()) as Box<dyn Command>,
         ].into_iter().map(|c| (c.name(), c)).collect()
     };
 }
