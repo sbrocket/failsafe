@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 #[macro_use]
 mod macros;
 
+mod lfg;
 mod ping;
 
 /// Generic trait that all command types implement.
