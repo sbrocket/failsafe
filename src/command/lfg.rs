@@ -17,7 +17,7 @@ use serenity::{
 };
 use std::concat;
 
-define_command!(Lfg, "lfg", "Command for interacting with scheduled events",
+define_command!(Lfg, "lfg", "Create and interact with scheduled events",
                 Subcommands: [LfgJoin, LfgCreate]);
 define_command!(LfgJoin, "join", "Join an existing event", Leaf);
 
