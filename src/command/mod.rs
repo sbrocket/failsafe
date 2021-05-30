@@ -206,30 +206,47 @@ impl CommandManager {
 
 impl dyn Command + '_ {
     fn build(&self, builder: &mut CreateApplicationCommand) {
-        match self.command_type() {
-            CommandType::Leaf(leaf) => leaf.build(builder),
-            CommandType::Subcommands(subcommands) => todo!(),
+        let options = match self.command_type() {
+            CommandType::Leaf(leaf) => leaf.build_options(),
+            CommandType::Subcommands(subcommands) => {
+                assert!(subcommands.len() <= 25);
+                subcommands
+                    .values()
+                    .map(|subcommand| subcommand.build_subcommand())
+                    .collect()
+            }
             CommandType::SubcommandGroups(groups) => todo!(),
         };
+        builder
+            .name(self.name())
+            .description(self.description())
+            .set_options(options);
     }
 }
 
 impl dyn LeafCommand + '_ {
-    fn build(&self, builder: &mut CreateApplicationCommand) {
+    fn build_subcommand(&self) -> CreateApplicationCommandOption {
+        let mut command = CreateApplicationCommandOption::default();
+        command
+            .kind(ApplicationCommandOptionType::SubCommand)
+            .name(self.name())
+            .description(self.description());
+        self.build_options().into_iter().for_each(|opt| {
+            let _ = command.add_sub_option(opt);
+        });
+        command
+    }
+
+    fn build_options(&self) -> Vec<CreateApplicationCommandOption> {
         assert!(self.options().len() <= 25);
-        let options = self
-            .options()
+        self.options()
             .into_iter()
             .map(|option| {
                 let mut builder = CreateApplicationCommandOption::default();
                 option.build(&mut builder);
                 builder
             })
-            .collect();
-        builder
-            .name(self.name())
-            .description(self.description())
-            .set_options(options);
+            .collect()
     }
 }
 
