@@ -13,7 +13,6 @@ use serenity::{
         },
     },
 };
-use std::collections::BTreeMap;
 use tracing::debug;
 
 #[macro_use]
@@ -31,7 +30,7 @@ pub trait Command: Send + Sync + std::fmt::Debug {
     fn command_type(&self) -> CommandType;
 }
 
-pub type SubcommandsMap = BTreeMap<&'static str, Box<dyn Command>>;
+pub type SubcommandsMap = Vec<(&'static str, Box<dyn Command>)>;
 
 /// Type of the command, which differs depending on the number of nested layers.
 pub enum CommandType<'a> {
@@ -94,7 +93,7 @@ impl OptionType {
 
 lazy_static! {
     /// List of all known commands; add new commands here as they're created.
-    static ref COMMANDS: BTreeMap<&'static str, Box<dyn Command>> = {
+    static ref COMMANDS: Vec<(&'static str, Box<dyn Command>)> = {
         vec![
             Box::new(ping::Ping::new()) as Box<dyn Command>,
             Box::new(lfg::Lfg::new()) as Box<dyn Command>,
@@ -119,8 +118,8 @@ impl CommandManager {
         let commands = guild
             .set_application_commands(&ctx, |commands| {
                 let app_commands = COMMANDS
-                    .values()
-                    .map(|command| {
+                    .iter()
+                    .map(|(_, command)| {
                         let mut builder = CreateApplicationCommand::default();
                         command.build(&mut builder);
                         builder
@@ -169,9 +168,11 @@ impl CommandManager {
         &'a Vec<ApplicationCommandInteractionDataOption>,
     )> {
         let name1 = data.name.as_str();
-        let first = COMMANDS
-            .get(name1)
-            .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?;
+        let first = &COMMANDS
+            .iter()
+            .find(|(name, _)| *name == name1)
+            .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?
+            .1;
 
         // TODO: This works but pretty clearly could be shortened with looping or recursion.
         Ok(match first.command_type() {
@@ -184,10 +185,11 @@ impl CommandManager {
                 );
                 let sub_data = data.options.first().unwrap();
                 let name2 = data.options.first().unwrap().name.as_str();
-                let cmd = subcommands
-                    .get(name2)
+                let cmd = &subcommands
+                    .iter()
+                    .find(|(name, _)| *name == name2)
                     .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", name1, name2))?
-                    .as_ref();
+                    .1;
 
                 // Check if this is a leaf or if there's a 2nd layer of nesting.
                 match cmd.command_type() {
@@ -200,14 +202,18 @@ impl CommandManager {
                         );
                         let group_data = sub_data.options.first().unwrap();
                         let name3 = group_data.name.as_str();
-                        let cmd = cmds.get(name3).ok_or_else(|| {
-                            format_err!(
-                                "Unknown subcommand in group '{} {} {}'",
-                                name1,
-                                name2,
-                                name3
-                            )
-                        })?;
+                        let cmd = &cmds
+                            .iter()
+                            .find(|(name, _)| *name == name3)
+                            .ok_or_else(|| {
+                                format_err!(
+                                    "Unknown subcommand in group '{} {} {}'",
+                                    name1,
+                                    name2,
+                                    name3
+                                )
+                            })?
+                            .1;
 
                         if let CommandType::Leaf(leaf) = cmd.command_type() {
                             ([name1, name2, name3].join("."), leaf, &group_data.options)
@@ -229,8 +235,8 @@ impl dyn Command + '_ {
             CommandType::Leaf(leaf) => leaf.build_options(),
             CommandType::Subcommands(cmds) => {
                 assert!(cmds.len() <= 25);
-                cmds.values()
-                    .map(|cmd| match cmd.command_type() {
+                cmds.iter()
+                    .map(|(_, cmd)| match cmd.command_type() {
                         CommandType::Leaf(leaf) => leaf.build_as_subcommand(),
                         CommandType::Subcommands(_) => cmd.build_subcommand_group(),
                     })
@@ -251,7 +257,7 @@ impl dyn Command + '_ {
             .description(self.description());
         if let CommandType::Subcommands(cmds) = self.command_type() {
             assert!(cmds.len() <= 25);
-            cmds.values().for_each(|cmd| {
+            cmds.iter().for_each(|(_, cmd)| {
                 if let CommandType::Leaf(leaf) = cmd.command_type() {
                     let _ = command.add_sub_option(leaf.build_as_subcommand());
                 } else {
