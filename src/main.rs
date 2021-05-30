@@ -8,7 +8,9 @@ use tokio::sync::OnceCell;
 use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
+#[macro_use]
 mod activity;
+
 mod command;
 mod event;
 mod util;

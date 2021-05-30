@@ -7,8 +7,9 @@ use serenity::{
     model::{
         id::GuildId,
         interactions::{
-            ApplicationCommand, ApplicationCommandInteractionData, ApplicationCommandOptionType,
-            Interaction,
+            ApplicationCommand, ApplicationCommandInteractionData,
+            ApplicationCommandInteractionDataOption, ApplicationCommandOptionType, Interaction,
+            InteractionType,
         },
     },
 };
@@ -30,45 +31,41 @@ pub trait Command: Send + Sync + std::fmt::Debug {
     fn command_type(&self) -> CommandType;
 }
 
-pub type SubcommandsMap = BTreeMap<&'static str, Box<dyn LeafCommand>>;
-pub type SubcommandGroupsMap = BTreeMap<&'static str, Box<dyn SubcommandGroup>>;
+pub type SubcommandsMap = BTreeMap<&'static str, Box<dyn Command>>;
 
 /// Type of the command, which differs depending on the number of nested layers.
 pub enum CommandType<'a> {
     /// A leaf command that handles user interactions.
     Leaf(&'a dyn LeafCommand),
-    /// A top level command that contains subcommands, i.e. a single layer of nesting.
+    /// A top level command that contains subcommands and/or subcommand groups. Note that
+    /// subcommands can only be nested twice.
     Subcommands(&'a SubcommandsMap),
-    /// A top level command that contains subcommand groups, i.e. two layers of nesting.
-    SubcommandGroups(&'a SubcommandGroupsMap),
 }
 
-/// A subcommand group is a command that contains leaf (sub)commands.
-pub trait SubcommandGroup: Command {
-    /// The subcommands contained in this group. Can only be leaf commands; no further nesting is
-    /// allowed.
-    fn subcommands(&self) -> &SubcommandsMap;
-}
-
-/// A leaf command, i.e. one that does not contain any Subcommand or SubcommandGroup options and
-/// that handles user interactions.
+/// Trait for leaf commands, which have user-facing options and handle user interactions.
 #[async_trait]
 pub trait LeafCommand: Command {
     /// Commands can have [0,25] options.
     fn options(&self) -> Vec<CommandOption>;
 
-    async fn handle_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()>;
+    async fn handle_interaction(
+        &self,
+        ctx: &Context,
+        interaction: &Interaction,
+        options: &Vec<ApplicationCommandInteractionDataOption>,
+    ) -> Result<()>;
 }
 
 /// Definition of a single command option.
 pub struct CommandOption {
-    name: String,
-    description: String,
+    name: &'static str,
+    description: &'static str,
     required: bool,
     option_type: OptionType,
 }
 
 /// The type for a CommandOption, including any choices if the type supports them.
+#[allow(dead_code)]
 pub enum OptionType {
     /// String options can have [0,25] choices.
     String(Vec<(String, String)>),
@@ -144,62 +141,83 @@ impl CommandManager {
         interaction: Interaction,
     ) -> Result<()> {
         debug!("Received interaction: {:?}", interaction);
-        let (cmd_name, leaf) = interaction.data.as_ref().map_or_else(
-            || Err(format_err!("Interaction has no data: {:?}", interaction)),
-            |data| self.find_leaf_command(data),
-        )?;
+
+        if interaction.kind != InteractionType::ApplicationCommand {
+            return Err(format_err!(
+                "Unexpected interaction type: {:?}",
+                interaction
+            ));
+        }
+
+        // TODO: Parse the options into an easier to consume form.
+        let data = interaction
+            .data
+            .as_ref()
+            .expect("ApplicationCommand interactions should always have data");
+        let (cmd_name, leaf, options) = self.find_leaf_command(data)?;
+
         debug!("'{}' handling interaction", cmd_name);
-        leaf.handle_interaction(ctx, interaction).await
+        leaf.handle_interaction(ctx, &interaction, options).await
     }
 
-    fn find_leaf_command(
+    fn find_leaf_command<'a>(
         &self,
-        data: &ApplicationCommandInteractionData,
-    ) -> Result<(String, &dyn LeafCommand)> {
-        let name = data.name.as_str();
+        data: &'a ApplicationCommandInteractionData,
+    ) -> Result<(
+        String,
+        &dyn LeafCommand,
+        &'a Vec<ApplicationCommandInteractionDataOption>,
+    )> {
+        let name1 = data.name.as_str();
         let first = COMMANDS
-            .get(name)
+            .get(name1)
             .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?;
+
+        // TODO: This works but pretty clearly could be shortened with looping or recursion.
         Ok(match first.command_type() {
-            CommandType::Leaf(leaf) => (name.to_string(), leaf),
+            CommandType::Leaf(leaf) => (name1.to_string(), leaf, &data.options),
             CommandType::Subcommands(subcommands) => {
                 ensure!(
                     data.options.len() == 1,
                     "Expected 1 option to identify subcommand: {:?}",
                     data
                 );
-                let sub_name = data.options.first().unwrap().name.as_str();
+                let sub_data = data.options.first().unwrap();
+                let name2 = data.options.first().unwrap().name.as_str();
                 let cmd = subcommands
-                    .get(sub_name)
-                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", &data.name, sub_name))?
+                    .get(name2)
+                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", name1, name2))?
                     .as_ref();
-                ([name, sub_name].join("."), cmd)
-            }
-            CommandType::SubcommandGroups(groups) => {
-                ensure!(
-                    data.options.len() == 1,
-                    "Expected 1 option to identify subcommand group: {:?}",
-                    data
-                );
-                let group_data = data.options.first().unwrap();
-                let group_name = group_data.name.as_str();
-                let group = groups.get(group_name).ok_or_else(|| {
-                    format_err!("Unknown subcommand group '{} {}'", &data.name, group_name)
-                })?;
-                let group_name = group.name();
-                let subcommands = group.subcommands();
 
-                ensure!(
-                    group_data.options.len() == 1,
-                    "Expected 1 option to identify subcommand in group: {:?}",
-                    group_data
-                );
-                let sub_name = data.options.first().unwrap().name.as_str();
-                let cmd = subcommands
-                    .get(sub_name)
-                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", &data.name, sub_name))?
-                    .as_ref();
-                ([name, group_name, sub_name].join("."), cmd)
+                // Check if this is a leaf or if there's a 2nd layer of nesting.
+                match cmd.command_type() {
+                    CommandType::Leaf(leaf) => ([name1, name2].join("."), leaf, &sub_data.options),
+                    CommandType::Subcommands(cmds) => {
+                        ensure!(
+                            sub_data.options.len() == 1,
+                            "Expected 1 option to identify subcommand: {:?}",
+                            sub_data
+                        );
+                        let group_data = sub_data.options.first().unwrap();
+                        let name3 = group_data.name.as_str();
+                        let cmd = cmds.get(name3).ok_or_else(|| {
+                            format_err!(
+                                "Unknown subcommand in group '{} {} {}'",
+                                name1,
+                                name2,
+                                name3
+                            )
+                        })?;
+
+                        if let CommandType::Leaf(leaf) = cmd.command_type() {
+                            ([name1, name2, name3].join("."), leaf, &group_data.options)
+                        } else {
+                            // Unreachable because this should have been caught during command
+                            // creation.
+                            unreachable!("Only 2 layers of nesting are allowed");
+                        }
+                    }
+                }
             }
         })
     }
@@ -209,24 +227,47 @@ impl dyn Command + '_ {
     fn build(&self, builder: &mut CreateApplicationCommand) {
         let options = match self.command_type() {
             CommandType::Leaf(leaf) => leaf.build_options(),
-            CommandType::Subcommands(subcommands) => {
-                assert!(subcommands.len() <= 25);
-                subcommands
-                    .values()
-                    .map(|subcommand| subcommand.build_subcommand())
+            CommandType::Subcommands(cmds) => {
+                assert!(cmds.len() <= 25);
+                cmds.values()
+                    .map(|cmd| match cmd.command_type() {
+                        CommandType::Leaf(leaf) => leaf.build_as_subcommand(),
+                        CommandType::Subcommands(_) => cmd.build_subcommand_group(),
+                    })
                     .collect()
             }
-            CommandType::SubcommandGroups(groups) => todo!(),
         };
         builder
             .name(self.name())
             .description(self.description())
             .set_options(options);
     }
+
+    fn build_subcommand_group(&self) -> CreateApplicationCommandOption {
+        let mut command = CreateApplicationCommandOption::default();
+        command
+            .kind(ApplicationCommandOptionType::SubCommandGroup)
+            .name(self.name())
+            .description(self.description());
+        if let CommandType::Subcommands(cmds) = self.command_type() {
+            assert!(cmds.len() <= 25);
+            cmds.values().for_each(|cmd| {
+                if let CommandType::Leaf(leaf) = cmd.command_type() {
+                    let _ = command.add_sub_option(leaf.build_as_subcommand());
+                } else {
+                    // Fine to panic since this is operating on static command definitions
+                    panic!("Only 2 layers of nesting are allowed");
+                }
+            });
+        } else {
+            unreachable!("Only called for CommandType::Subcommands");
+        }
+        command
+    }
 }
 
 impl dyn LeafCommand + '_ {
-    fn build_subcommand(&self) -> CreateApplicationCommandOption {
+    fn build_as_subcommand(&self) -> CreateApplicationCommandOption {
         let mut command = CreateApplicationCommandOption::default();
         command
             .kind(ApplicationCommandOptionType::SubCommand)

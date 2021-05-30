@@ -4,7 +4,9 @@ use anyhow::Result;
 use serenity::{
     async_trait,
     client::Context,
-    model::interactions::{Interaction, InteractionResponseType},
+    model::interactions::{
+        ApplicationCommandInteractionDataOption, Interaction, InteractionResponseType,
+    },
     utils::MessageBuilder,
 };
 
@@ -16,7 +18,12 @@ impl LeafCommand for Ping {
         vec![]
     }
 
-    async fn handle_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()> {
+    async fn handle_interaction(
+        &self,
+        ctx: &Context,
+        interaction: &Interaction,
+        _: &Vec<ApplicationCommandInteractionDataOption>,
+    ) -> Result<()> {
         let user = interaction.get_user_id()?;
         interaction
             .create_interaction_response(&ctx, |resp| {

@@ -1,5 +1,5 @@
 macro_rules! define_command {
-    ($ty:ident, $name:literal, $descr:literal, Leaf) => {
+    ($ty:ident, $name:literal, $descr:expr, Leaf) => {
         #[derive(Debug)]
         pub struct $ty;
 
@@ -23,7 +23,7 @@ macro_rules! define_command {
             }
         }
     };
-    ($ty:ident, $name:literal, $descr:literal, Subcommands: [$($sub_ty:ident),+ $(,)?]) => {
+    ($ty:ident, $name:literal, $descr:expr, Subcommands: [$($sub_ty:ident),+ $(,)?]) => {
         #[derive(Debug)]
         pub struct $ty {
             subcommands: $crate::command::SubcommandsMap,
@@ -33,7 +33,7 @@ macro_rules! define_command {
             pub fn new() -> Self {
                 Self {
                     subcommands: vec![
-                        $(Box::new($sub_ty::new()) as Box<dyn LeafCommand>),+
+                        $(Box::new($sub_ty::new()) as Box<dyn $crate::command::Command>),+
                     ]
                     .into_iter()
                     .map(|c| (c.name(), c))
