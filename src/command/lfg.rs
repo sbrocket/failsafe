@@ -33,7 +33,7 @@ macro_rules! define_create_commands {
 
             $(
                 define_command!([<LfgCreate $enum_name>], $cmd,
-                                concat!("Create a new ", $name, "event"), Leaf);
+                                concat!("Create a new ", $name, " event"), Leaf);
 
                 impl LfgCreateActivity for [<LfgCreate $enum_name>] {
                     const ACTIVITY: ActivityType = ActivityType::$enum_name;
