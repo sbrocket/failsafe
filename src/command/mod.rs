@@ -1,4 +1,4 @@
-use anyhow::{format_err, Result};
+use anyhow::{ensure, format_err, Result};
 use lazy_static::lazy_static;
 use serenity::{
     async_trait,
@@ -6,21 +6,49 @@ use serenity::{
     client::Context,
     model::{
         id::GuildId,
-        interactions::{ApplicationCommand, ApplicationCommandOptionType, Interaction},
+        interactions::{
+            ApplicationCommand, ApplicationCommandInteractionData, ApplicationCommandOptionType,
+            Interaction,
+        },
     },
 };
 use std::collections::BTreeMap;
 
 mod ping;
 
-/// Trait for each individual slash command to implement.
-// TODO: Does this really need to be a trait?
-#[async_trait]
+/// Generic trait that all command types implement.
 trait Command: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn description(&self) -> &'static str;
 
+    fn command_type(&self) -> CommandType;
+}
+
+type SubcommandsMap = BTreeMap<&'static str, Box<dyn LeafCommand>>;
+type SubcommandGroupsMap = BTreeMap<&'static str, Box<dyn SubcommandGroup>>;
+
+/// Type of the command, which differs depending on the number of nested layers.
+enum CommandType<'a> {
+    /// A leaf command that handles user interactions.
+    Leaf(&'a dyn LeafCommand),
+    /// A top level command that contains subcommands, i.e. a single layer of nesting.
+    Subcommands(&'a SubcommandsMap),
+    /// A top level command that contains subcommand groups, i.e. two layers of nesting.
+    SubcommandGroups(&'a SubcommandGroupsMap),
+}
+
+/// A subcommand group is a command that contains leaf (sub)commands.
+trait SubcommandGroup: Command {
+    /// The subcommands contained in this group. Can only be leaf commands; no further nesting is
+    /// allowed.
+    fn subcommands(&self) -> &SubcommandsMap;
+}
+
+/// A leaf command, i.e. one that does not contain any Subcommand or SubcommandGroup options and
+/// that handles user interactions.
+#[async_trait]
+trait LeafCommand: Command {
     /// Commands can have [0,25] options.
     fn options(&self) -> Vec<CommandOption>;
 
@@ -32,17 +60,11 @@ struct CommandOption {
     name: String,
     description: String,
     required: bool,
-    type_choices: OptionType,
+    option_type: OptionType,
 }
 
-/// The type for a CommandOption, including choices for the type if supported.
+/// The type for a CommandOption, including any choices if the type supports them.
 enum OptionType {
-    /// Subcommand cannot contain options with type Subcommand or SubcommandGroup, and can have
-    /// [1,25] options.
-    Subcommand(Vec<CommandOption>),
-    /// SubcommandGroup can only contain options with type Subcommand, and can have [1,25]
-    /// subcommands.
-    SubcommandGroup(Vec<CommandOption>),
     /// String options can have [0,25] choices.
     String(Vec<(String, String)>),
     /// Integer options can have [0,25] choices.
@@ -57,8 +79,6 @@ enum OptionType {
 impl OptionType {
     fn api_type(&self) -> ApplicationCommandOptionType {
         match self {
-            OptionType::Subcommand(_) => ApplicationCommandOptionType::SubCommand,
-            OptionType::SubcommandGroup(_) => ApplicationCommandOptionType::SubCommandGroup,
             OptionType::String(_) => ApplicationCommandOptionType::String,
             OptionType::Integer(_) => ApplicationCommandOptionType::Integer,
             OptionType::Boolean => ApplicationCommandOptionType::Boolean,
@@ -73,10 +93,9 @@ impl OptionType {
 lazy_static! {
     /// List of all known commands; add new commands here as they're created.
     static ref COMMANDS: BTreeMap<&'static str, Box<dyn Command>> = {
-        vec![ping::Ping]
-            .into_iter()
-            .map(|c| (c.name(), Box::new(c) as Box<dyn Command>))
-            .collect()
+        vec![
+            Box::new(ping::Ping) as Box<dyn Command>,
+        ].into_iter().map(|c| (c.name(), c)).collect()
     };
 }
 
@@ -118,18 +137,73 @@ impl CommandManager {
         ctx: &Context,
         interaction: Interaction,
     ) -> Result<()> {
-        let command = if let Some(data) = &interaction.data {
-            COMMANDS
-                .get(data.name.as_str())
-                .ok_or_else(|| format_err!("Unknown interaction command name '{}'", &data.name))?
-        } else {
-            return Err(format_err!("Interaction has no data: {:?}", interaction));
-        };
-        command.handle_interaction(ctx, interaction).await
+        let leaf = interaction.data.as_ref().map_or_else(
+            || Err(format_err!("Interaction has no data: {:?}", interaction)),
+            |data| self.find_leaf_command(data),
+        )?;
+        leaf.handle_interaction(ctx, interaction).await
+    }
+
+    fn find_leaf_command(
+        &self,
+        data: &ApplicationCommandInteractionData,
+    ) -> Result<&dyn LeafCommand> {
+        let first = COMMANDS
+            .get(data.name.as_str())
+            .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?;
+        Ok(match first.command_type() {
+            CommandType::Leaf(leaf) => leaf,
+            CommandType::Subcommands(subcommands) => {
+                ensure!(
+                    data.options.len() == 1,
+                    "Expected 1 option to identify subcommand: {:?}",
+                    data
+                );
+                let sub_name = data.options.first().unwrap().name.as_str();
+                subcommands
+                    .get(sub_name)
+                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", &data.name, sub_name))?
+                    .as_ref()
+            }
+            CommandType::SubcommandGroups(groups) => {
+                ensure!(
+                    data.options.len() == 1,
+                    "Expected 1 option to identify subcommand group: {:?}",
+                    data
+                );
+                let group_data = data.options.first().unwrap();
+                let group_name = group_data.name.as_str();
+                let group = groups.get(group_name).ok_or_else(|| {
+                    format_err!("Unknown subcommand group '{} {}'", &data.name, group_name)
+                })?;
+                let subcommands = group.subcommands();
+
+                ensure!(
+                    group_data.options.len() == 1,
+                    "Expected 1 option to identify subcommand in group: {:?}",
+                    group_data
+                );
+                let sub_name = data.options.first().unwrap().name.as_str();
+                subcommands
+                    .get(sub_name)
+                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", &data.name, sub_name))?
+                    .as_ref()
+            }
+        })
     }
 }
 
-impl dyn Command {
+impl dyn Command + '_ {
+    fn build(&self, builder: &mut CreateApplicationCommand) {
+        match self.command_type() {
+            CommandType::Leaf(leaf) => leaf.build(builder),
+            CommandType::Subcommands(subcommands) => todo!(),
+            CommandType::SubcommandGroups(groups) => todo!(),
+        };
+    }
+}
+
+impl dyn LeafCommand + '_ {
     fn build(&self, builder: &mut CreateApplicationCommand) {
         assert!(self.options().len() <= 25);
         let options = self
@@ -150,17 +224,8 @@ impl dyn Command {
 
 impl CommandOption {
     fn build(self, builder: &mut CreateApplicationCommandOption) {
-        let kind = self.type_choices.api_type();
-        match self.type_choices {
-            OptionType::Subcommand(options) | OptionType::SubcommandGroup(options) => {
-                assert!(!options.is_empty());
-                assert!(options.len() <= 25);
-                options.into_iter().for_each(|option| {
-                    let mut sub_builder = CreateApplicationCommandOption::default();
-                    option.build(&mut sub_builder);
-                    builder.add_sub_option(sub_builder);
-                })
-            }
+        let kind = self.option_type.api_type();
+        match self.option_type {
             OptionType::String(choices) => {
                 assert!(choices.len() <= 25);
                 choices.into_iter().for_each(|(name, value)| {

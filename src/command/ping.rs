@@ -1,4 +1,4 @@
-use super::{Command, CommandOption};
+use super::{Command, CommandOption, CommandType, LeafCommand};
 use anyhow::Result;
 use serenity::{
     async_trait,
@@ -8,7 +8,6 @@ use serenity::{
 
 pub struct Ping;
 
-#[async_trait]
 impl Command for Ping {
     fn name(&self) -> &'static str {
         "ping"
@@ -18,6 +17,13 @@ impl Command for Ping {
         "A ping command"
     }
 
+    fn command_type(&self) -> CommandType {
+        CommandType::Leaf(self as &dyn LeafCommand)
+    }
+}
+
+#[async_trait]
+impl LeafCommand for Ping {
     fn options(&self) -> Vec<CommandOption> {
         vec![]
     }
