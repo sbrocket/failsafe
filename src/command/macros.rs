@@ -1,5 +1,6 @@
 macro_rules! define_command {
     ($ty:ident, $name:literal, $descr:literal, Leaf) => {
+        #[derive(Debug)]
         pub struct $ty;
 
         impl $ty {
@@ -23,6 +24,7 @@ macro_rules! define_command {
         }
     };
     ($ty:ident, $name:literal, $descr:literal, Subcommands: [$($sub_ty:ident),+ $(,)?]) => {
+        #[derive(Debug)]
         pub struct $ty {
             subcommands: $crate::command::SubcommandsMap,
         }

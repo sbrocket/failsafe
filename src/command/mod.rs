@@ -13,6 +13,7 @@ use serenity::{
     },
 };
 use std::collections::BTreeMap;
+use tracing::debug;
 
 #[macro_use]
 mod macros;
@@ -21,7 +22,7 @@ mod lfg;
 mod ping;
 
 /// Generic trait that all command types implement.
-pub trait Command: Send + Sync {
+pub trait Command: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &'static str;
 
     fn description(&self) -> &'static str;
@@ -141,22 +142,25 @@ impl CommandManager {
         ctx: &Context,
         interaction: Interaction,
     ) -> Result<()> {
-        let leaf = interaction.data.as_ref().map_or_else(
+        debug!("Received interaction: {:?}", interaction);
+        let (cmd_name, leaf) = interaction.data.as_ref().map_or_else(
             || Err(format_err!("Interaction has no data: {:?}", interaction)),
             |data| self.find_leaf_command(data),
         )?;
+        debug!("'{}' handling interaction", cmd_name);
         leaf.handle_interaction(ctx, interaction).await
     }
 
     fn find_leaf_command(
         &self,
         data: &ApplicationCommandInteractionData,
-    ) -> Result<&dyn LeafCommand> {
+    ) -> Result<(String, &dyn LeafCommand)> {
+        let name = data.name.as_str();
         let first = COMMANDS
-            .get(data.name.as_str())
+            .get(name)
             .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?;
         Ok(match first.command_type() {
-            CommandType::Leaf(leaf) => leaf,
+            CommandType::Leaf(leaf) => (name.to_string(), leaf),
             CommandType::Subcommands(subcommands) => {
                 ensure!(
                     data.options.len() == 1,
@@ -164,10 +168,11 @@ impl CommandManager {
                     data
                 );
                 let sub_name = data.options.first().unwrap().name.as_str();
-                subcommands
+                let cmd = subcommands
                     .get(sub_name)
                     .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", &data.name, sub_name))?
-                    .as_ref()
+                    .as_ref();
+                ([name, sub_name].join("."), cmd)
             }
             CommandType::SubcommandGroups(groups) => {
                 ensure!(
@@ -180,6 +185,7 @@ impl CommandManager {
                 let group = groups.get(group_name).ok_or_else(|| {
                     format_err!("Unknown subcommand group '{} {}'", &data.name, group_name)
                 })?;
+                let group_name = group.name();
                 let subcommands = group.subcommands();
 
                 ensure!(
@@ -188,10 +194,11 @@ impl CommandManager {
                     group_data
                 );
                 let sub_name = data.options.first().unwrap().name.as_str();
-                subcommands
+                let cmd = subcommands
                     .get(sub_name)
                     .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", &data.name, sub_name))?
-                    .as_ref()
+                    .as_ref();
+                ([name, group_name, sub_name].join("."), cmd)
             }
         })
     }

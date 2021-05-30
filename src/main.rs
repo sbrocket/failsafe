@@ -21,7 +21,7 @@ struct Handler {
 impl EventHandler for Handler {
     async fn ready(&self, _ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
-        debug!("Ready data: {:#?}", ready);
+        debug!("Ready data: {:?}", ready);
     }
 
     async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
