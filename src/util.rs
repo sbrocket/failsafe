@@ -1,12 +1,12 @@
 use anyhow::{format_err, Result};
 use serde_json::Value;
 use serenity::model::{
-    id::UserId,
     interactions::{ApplicationCommandInteractionDataOption, Interaction},
+    prelude::*,
 };
 
 pub trait InteractionExt {
-    fn get_user_id(&self) -> Result<UserId>;
+    fn get_user(&self) -> Result<&User>;
 }
 
 pub trait OptionsExt {
@@ -14,11 +14,11 @@ pub trait OptionsExt {
 }
 
 impl InteractionExt for Interaction {
-    fn get_user_id(&self) -> Result<UserId> {
+    fn get_user(&self) -> Result<&User> {
         self.member
             .as_ref()
-            .map(|m| m.user.id)
-            .or(self.user.as_ref().map(|u| u.id))
+            .map(|m| &m.user)
+            .or(self.user.as_ref())
             .ok_or(format_err!("Interaction from no user?! {:?}", self))
     }
 }

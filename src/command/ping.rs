@@ -24,12 +24,12 @@ impl LeafCommand for Ping {
         interaction: &Interaction,
         _: &Vec<ApplicationCommandInteractionDataOption>,
     ) -> Result<()> {
-        let user = interaction.get_user_id()?;
+        let user = interaction.get_user()?;
         interaction
             .create_interaction_response(&ctx, |resp| {
                 let message = MessageBuilder::new()
                     .push("Pong! Hi ")
-                    .mention(&user)
+                    .mention(user)
                     .build();
                 resp.kind(InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|msg| msg.content(message))

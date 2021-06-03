@@ -25,12 +25,14 @@ macro_rules! define_activity_types {
         }
 
         impl ActivityType {
+            #[allow(dead_code)]
             pub fn name(&self) -> &'static str {
                 match self {
                     $(Self::$enum_name => $name),+
                 }
             }
 
+            #[allow(dead_code)]
             pub fn command_name(&self) -> &'static str {
                 match self {
                     $(Self::$enum_name => $cmd),+
@@ -72,6 +74,17 @@ macro_rules! define_activities {
 
             pub fn activities_with_type(ty: ActivityType) -> impl Iterator<Item = Activity> {
                 Self::into_enum_iter().filter(move |a| a.activity_type() == ty)
+            }
+
+            pub fn activity_with_id_prefix(prefix: impl AsRef<str>) -> Option<Activity> {
+                let prefix = prefix.as_ref();
+                Self::into_enum_iter().find(|a| a.id_prefix() == prefix)
+            }
+        }
+
+        impl std::fmt::Display for Activity {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.name())
             }
         }
     };
