@@ -46,7 +46,7 @@ with_activity_types! { define_activity_types }
 static_assertions::const_assert!(ActivityType::VARIANT_COUNT <= 25);
 
 macro_rules! define_activities {
-    ($($enum_name:ident: ($name:literal, $prefix:literal, $activity_type:ident)),+ $(,)?) => {
+    ($($enum_name:ident: ($name:literal, $prefix:literal, $activity_type:ident, $group_size:literal)),+ $(,)?) => {
         /// All supported Destiny 2 activities.
         #[derive(IntoEnumIterator, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
         pub enum Activity {
@@ -80,6 +80,12 @@ macro_rules! define_activities {
                 let prefix = prefix.as_ref();
                 Self::into_enum_iter().find(|a| a.id_prefix() == prefix)
             }
+
+            pub fn default_group_size(&self) -> u8 {
+                match self {
+                    $(Self::$enum_name => $group_size),+
+                }
+            }
         }
 
         impl std::fmt::Display for Activity {
@@ -92,24 +98,24 @@ macro_rules! define_activities {
 
 // Other possible activities to add: EmpireHunt, LostSector, NightmareHunt, Quests, Strikes, Farming, Story, BlindWell,
 define_activities! {
-    VaultOfGlass: ("Vault of Glass", "vog", Raid),
-    DeepStoneCrypt: ("Deep Stone Crypt", "dsc", Raid),
-    GardenOfSalvation: ("Garden of Salvation", "gos", Raid),
-    LastWish: ("Last Wish", "lw", Raid),
-    Prophecy: ("Prophecy", "proph", Dungeon),
-    PitOfHeresy: ("Pit of Heresy", "pit", Dungeon),
-    ShatteredThrone: ("Shattered Throne", "throne", Dungeon),
-    IronBanner: ("Iron Banner", "ib", Crucible),
-    TrialsOfOsiris: ("Trials of Osiris", "trials", Crucible),
-    Quickplay: ("Quickplay", "quick", Crucible),
-    Competitive: ("Competitive", "comp", Crucible),
-    Gambit: ("Gambit", "gambit", Gambit),
-    Harbinger: ("Harbinger", "harb", ExoticQuest),
-    Presage: ("Presage", "pres", ExoticQuest),
-    Override: ("Override", "override", Seasonal),
-    WrathbornHunt: ("Wrathborn Hunt", "hunt", Seasonal),
-    Nightfall: ("Nightfall", "nf", Other),
-    Custom: ("Custom", "cust", Custom),
+    VaultOfGlass: ("Vault of Glass", "vog", Raid, 6),
+    DeepStoneCrypt: ("Deep Stone Crypt", "dsc", Raid, 6),
+    GardenOfSalvation: ("Garden of Salvation", "gos", Raid, 6),
+    LastWish: ("Last Wish", "lw", Raid, 6),
+    Prophecy: ("Prophecy", "proph", Dungeon, 3),
+    PitOfHeresy: ("Pit of Heresy", "pit", Dungeon, 3),
+    ShatteredThrone: ("Shattered Throne", "throne", Dungeon, 3),
+    IronBanner: ("Iron Banner", "ib", Crucible, 6),
+    TrialsOfOsiris: ("Trials of Osiris", "trials", Crucible, 4),
+    Quickplay: ("Quickplay", "quick", Crucible, 4),
+    Competitive: ("Competitive", "comp", Crucible, 4),
+    Gambit: ("Gambit", "gambit", Gambit, 4),
+    Harbinger: ("Harbinger", "harb", ExoticQuest, 3),
+    Presage: ("Presage", "pres", ExoticQuest, 3),
+    Override: ("Override", "override", Seasonal, 6),
+    WrathbornHunt: ("Wrathborn Hunt", "hunt", Seasonal, 3),
+    Nightfall: ("Nightfall", "nf", Other, 3),
+    Custom: ("Custom", "cust", Custom, 6),
 }
 
 #[cfg(test)]
