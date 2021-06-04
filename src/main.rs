@@ -1,4 +1,5 @@
 use command::CommandManager;
+use event::EventManager;
 use serenity::{
     async_trait,
     model::{gateway::Ready, id::GuildId, interactions::Interaction},
@@ -54,7 +55,7 @@ impl EventHandler for Handler {
             .dispatch_interaction(&ctx, interaction)
             .await
         {
-            error!("Error dispatching interaction: {}", err);
+            error!("Error dispatching interaction: {:?}", err);
         }
     }
 }
@@ -71,6 +72,8 @@ async fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to start the logger");
 
+    let event_manager = EventManager::new();
+
     let token = std::env::var("DISCORD_BOT_TOKEN").expect("Missing $DISCORD_BOT_TOKEN");
     let app_id = std::env::var("DISCORD_APP_ID")
         .expect("Missing DISCORD_APP_ID")
@@ -80,6 +83,7 @@ async fn main() {
     let mut client = Client::builder(&token)
         .application_id(app_id)
         .event_handler(Handler::default())
+        .type_map_insert::<EventManager>(event_manager)
         .await
         .expect("Error creating client");
 

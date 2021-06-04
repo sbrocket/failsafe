@@ -95,3 +95,37 @@ pub fn parse_datetime(input: impl AsRef<str>) -> Result<DateTime<Tz>> {
     .single()
     .ok_or(format_err!("Ambiguous local time"))
 }
+
+/// Intended to be used with the #[serde(with = "module")] annotation on DateTime<Tz> fields
+pub mod serialize_datetime_tz {
+    use super::*;
+    use chrono::Utc;
+    use serde::{
+        de::{Error, Unexpected},
+        Deserialize, Deserializer, Serialize, Serializer,
+    };
+    use std::str::FromStr;
+
+    #[derive(Serialize, Deserialize)]
+    struct UtcDatetimeAndTimezone<'a>(DateTime<Utc>, &'a str);
+
+    pub fn serialize<S>(dt: &DateTime<Tz>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Serialize::serialize(
+            &UtcDatetimeAndTimezone(dt.with_timezone(&Utc), dt.timezone().name()),
+            s,
+        )
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<DateTime<Tz>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: UtcDatetimeAndTimezone = Deserialize::deserialize(d)?;
+        let tz = Tz::from_str(value.1)
+            .map_err(|s| D::Error::invalid_value(Unexpected::Str(&s), &"a chrono_tz::Tz name"))?;
+        Ok(value.0.with_timezone(&tz))
+    }
+}

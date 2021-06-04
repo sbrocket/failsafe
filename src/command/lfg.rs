@@ -2,10 +2,11 @@ use super::{CommandOption, LeafCommand};
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
+    event::EventManager,
     time::parse_datetime,
     util::*,
 };
-use anyhow::{format_err, Result};
+use anyhow::{format_err, Context as _, Result};
 use paste::paste;
 use serde_json::Value;
 use serenity::{
@@ -18,7 +19,7 @@ use serenity::{
     utils::MessageBuilder,
 };
 use std::{concat, time::Duration};
-use tracing::debug;
+use tracing::{debug, error};
 
 define_command!(Lfg, "lfg", "Create and interact with scheduled events",
                 Subcommands: [LfgJoin, LfgCreate]);
@@ -158,31 +159,60 @@ impl<T: LfgCreateActivity> LeafCommand for T {
         .await?;
 
         // Wait for the user to reply with the description.
-        let followup_content = if let Some(reply) = user
+        if let Some(reply) = user
             .await_reply(&ctx)
             .timeout(Duration::from_secs(LFG_CREATE_DESCRIPTION_TIMEOUT_SEC))
             .await
         {
-            // Immediately delete the user's message, since the rest of the bot interaction is
-            // ephemeral.
-            debug!("Got event description: {:?}", reply.content);
+            // Immediately delete the user's (public) message since the rest of the bot interaction
+            // is ephemeral.
             reply.delete(&ctx).await?;
 
-            // TODO: Create the event, update the original response, include event embed, provide
-            // buttons to join the event or post publicly
-            "Ok, I'll create your event...sike! *Still broken......*".to_string()
+            let description = &reply.content;
+            debug!("Got event description: {:?}", description);
+
+            let mut type_map = ctx.data.write().await;
+            let event_manager = type_map.get_mut::<EventManager>().unwrap();
+            let event = match event_manager.create_event(&user, activity, datetime, description) {
+                Ok(event) => event,
+                Err(err) => {
+                    if let Err(edit_err) = interaction
+                        .edit_original_interaction_response(&ctx, |resp| {
+                            resp.content(
+                                "Sorry Captain, I seem to be having trouble creating your event...",
+                            )
+                        })
+                        .await
+                    {
+                        error!(
+                            "Failed to edit response to indicate an error: {:?}",
+                            edit_err
+                        );
+                    }
+                    return Err(err.context("Failed to create event"));
+                }
+            };
+
+            // TODO: Add buttons to join event, post publicly
+            let content = "Your event has been created, Captain! Would you like to join it or have me post it publicly?";
+            interaction
+                .edit_original_interaction_response(&ctx, |resp| {
+                    resp.content(content).add_embed(event.as_embed())
+                })
+                .await
+                .context("Failed to edit response after creating event")?;
         } else {
-            MessageBuilder::new()
+            // Timed out waiting for the description, send a followup message so that the user can
+            // see the description request still and so the mention works.
+            let content = MessageBuilder::new()
                 .push("**Yoohoo, ")
                 .mention(user)
                 .push("!** Are the Fallen dismantling *your* brain now? *Whatever, just gonna ask me again...not like I'm going anywhere...*")
-                .build()
+                .build();
+            interaction
+                .create_followup_message(&ctx, |msg| msg.content(content).flags(EPHEMERAL_FLAG))
+                .await?;
         };
-        let _followup = interaction
-            .create_followup_message(&ctx, |msg| {
-                msg.content(followup_content).flags(EPHEMERAL_FLAG)
-            })
-            .await?;
         Ok(())
     }
 }
