@@ -104,6 +104,14 @@ pub struct Event {
 }
 
 impl Event {
+    pub fn join(&mut self, user: &User) {
+        self.confirmed.push(user.into())
+    }
+
+    pub fn formatted_datetime(&self) -> String {
+        self.datetime.format("%-I:%M %p %Z %-m/%-d").to_string()
+    }
+
     fn confirmed_groups(&self) -> impl Iterator<Item = &[EventUser]> {
         self.confirmed
             .chunks(self.group_size as usize)
@@ -113,12 +121,11 @@ impl Event {
     // TODO: The event needs to keep track of all the messages that exist with an event embed, so it
     // can update them as the event is modified.
     pub fn as_embed(&self) -> CreateEmbed {
-        let start_time = self.datetime.format("%I:%M %p %Z %m/%d");
         let mut embed = CreateEmbed::default();
         embed
             .field("Activity", self.activity, true)
-            .field("Start Time", start_time, true)
-            .field("Join ID", self.id, true)
+            .field("Start Time", self.formatted_datetime(), true)
+            .field("Event ID", self.id, true)
             .field("Description", self.description.clone(), false)
             .footer(|f| f.text(format!("Creator | {} | Your Time", self.creator.name)))
             .timestamp(&self.datetime.with_timezone(&Utc));
@@ -197,6 +204,20 @@ impl EventManager {
         self.events.insert(key, event);
         self.update_store().await?;
         Ok(self.events.get(&key).unwrap())
+    }
+
+    pub fn get_event(&self, id: &EventId) -> Option<&Event> {
+        self.events.get(&id)
+    }
+
+    pub async fn edit_event<T>(
+        &mut self,
+        id: &EventId,
+        edit_fn: impl FnOnce(Option<&mut Event>) -> T,
+    ) -> Result<T> {
+        let ret = edit_fn(self.events.get_mut(&id));
+        self.update_store().await?;
+        Ok(ret)
     }
 
     async fn update_store(&mut self) -> Result<()> {
