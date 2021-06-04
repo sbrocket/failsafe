@@ -115,15 +115,16 @@ impl LeafCommand for LfgJoin {
 
         let mut type_map = ctx.data.write().await;
         let event_manager = type_map.get_mut::<EventManager>().unwrap();
-        let edit_result = edit_event_from_str(event_manager, &event_id, |event| {
-            event.join(&user);
-            format!(
-                "Added you to the {} event at {}!",
-                event.activity,
-                event.formatted_datetime()
-            )
-        })
-        .await;
+        let edit_result =
+            edit_event_from_str(event_manager, &event_id, |event| match event.join(&user) {
+                Ok(()) => format!(
+                    "Added you to the {} event at {}!",
+                    event.activity,
+                    event.formatted_datetime()
+                ),
+                Err(_) => "You're already in that event!".to_owned(),
+            })
+            .await;
         let content = match edit_result {
             Ok(msg) => msg,
             Err(err) => {

@@ -3,6 +3,7 @@ use anyhow::{ensure, format_err, Context as _, Error, Result};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
     builder::CreateEmbed,
@@ -103,9 +104,19 @@ pub struct Event {
     pub alternates: Vec<EventUser>,
 }
 
+// This is a debugging feature, to allow testing the bot with a small number of users.
+lazy_static! {
+    static ref ALLOW_DUPLICATE_JOIN: bool =
+        std::env::var("ALLOW_DUPLICATE_JOIN").map_or(false, |v| v == "1");
+}
+
 impl Event {
-    pub fn join(&mut self, user: &User) {
-        self.confirmed.push(user.into())
+    pub fn join(&mut self, user: &User) -> Result<()> {
+        if !*ALLOW_DUPLICATE_JOIN && self.confirmed.iter().any(|u| u.id == user.id) {
+            return Err(format_err!("User already in event"));
+        }
+        self.confirmed.push(user.into());
+        Ok(())
     }
 
     pub fn formatted_datetime(&self) -> String {
