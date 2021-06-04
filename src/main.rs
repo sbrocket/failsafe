@@ -72,7 +72,10 @@ async fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to start the logger");
 
-    let event_manager = EventManager::new();
+    let event_store = std::env::var("EVENT_MANAGER_STORE").expect("Missing $EVENT_MANAGER_STORE");
+    let event_manager = EventManager::new(event_store)
+        .await
+        .expect("Failed to create EventManager");
 
     let token = std::env::var("DISCORD_BOT_TOKEN").expect("Missing $DISCORD_BOT_TOKEN");
     let app_id = std::env::var("DISCORD_APP_ID")

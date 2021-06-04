@@ -1,8 +1,6 @@
-use crate::activity::Activity;
-use crate::time::serialize_datetime_tz;
-use anyhow::{ensure, format_err, Result};
-use chrono::DateTime;
-use chrono::Utc;
+use crate::{activity::Activity, time::serialize_datetime_tz, util::*};
+use anyhow::{ensure, format_err, Context as _, Error, Result};
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -13,11 +11,16 @@ use serenity::{
 };
 use std::{
     collections::{BTreeMap, HashMap},
+    convert::TryFrom,
     iter::successors,
+    path::PathBuf,
+    str::FromStr,
 };
+use tokio::{fs, io::AsyncWriteExt};
 
 /// Unique identifier for an Event.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub struct EventId {
     pub activity: Activity,
     pub idx: u8,
@@ -33,12 +36,55 @@ impl std::fmt::Display for EventId {
     }
 }
 
+impl From<EventId> for String {
+    fn from(id: EventId) -> String {
+        id.to_string()
+    }
+}
+
+impl FromStr for EventId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        if let Some((split_idx, _)) = s
+            .char_indices()
+            .skip_while(|(_, c)| c.is_ascii_alphabetic())
+            .next()
+        {
+            let (s1, s2) = s.split_at(split_idx);
+            let activity = Activity::activity_with_id_prefix(s1)
+                .ok_or_else(|| format_err!("Unknown activity prefix"))?;
+            let event_idx: u8 = s2.parse().context("Invalid number in event ID")?;
+            Ok(event_id(activity, event_idx))
+        } else {
+            Err(format_err!("Unexpected event ID format"))
+        }
+    }
+}
+
+impl TryFrom<String> for EventId {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Self::from_str(&value)
+    }
+}
+
 // TODO: We currently persist the last seen username. Need to make sure these stay up to date as we
 // get new user info.
 #[derive(Serialize, Deserialize)]
 pub struct EventUser {
     pub id: UserId,
     pub name: String,
+}
+
+impl From<&User> for EventUser {
+    fn from(user: &User) -> Self {
+        EventUser {
+            id: user.id,
+            name: user.name.clone(),
+        }
+    }
 }
 
 /// A single scheduled event.
@@ -95,18 +141,31 @@ impl Event {
 }
 
 /// Manages a single server's worth of events.
-#[derive(Default)]
+#[cfg_attr(test, derive(Default))]
 pub struct EventManager {
+    store_path: Option<PathBuf>,
     events: BTreeMap<EventId, Event>,
     next_id: HashMap<Activity, u8>,
 }
 
 impl EventManager {
-    pub fn new() -> Self {
-        Self::default()
+    pub async fn new(store_path: impl Into<PathBuf>) -> Result<Self> {
+        let store_path = store_path.into();
+        let events = match fs::read(&store_path).await {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::default()),
+            Ok(store_bytes) => serde_json::from_slice(&store_bytes)
+                .context("Failed to deserialize EventManger's event data"),
+            Err(err) => Err(Error::from(err).context("Failed to read event store")),
+        }?;
+
+        Ok(EventManager {
+            store_path: Some(store_path),
+            events,
+            next_id: Default::default(),
+        })
     }
 
-    pub fn create_event(
+    pub async fn create_event(
         &mut self,
         creator: &User,
         activity: Activity,
@@ -121,16 +180,14 @@ impl EventManager {
             datetime,
             description,
             group_size: activity.default_group_size(),
-            creator: EventUser {
-                id: creator.id,
-                name: creator.name.clone(),
-            },
+            creator: creator.into(),
             confirmed: vec![],
             alternates: vec![],
         })
+        .await
     }
 
-    fn add_event(&mut self, event: Event) -> Result<&Event> {
+    async fn add_event(&mut self, event: Event) -> Result<&Event> {
         ensure!(
             !self.events.contains_key(&event.id),
             "Event already exists with ID {}",
@@ -138,7 +195,29 @@ impl EventManager {
         );
         let key = event.id;
         self.events.insert(key, event);
+        self.update_store().await?;
         Ok(self.events.get(&key).unwrap())
+    }
+
+    async fn update_store(&mut self) -> Result<()> {
+        let store_path = match &self.store_path {
+            Some(path) => path,
+            None => return Ok(()),
+        };
+
+        let json = serde_json::to_vec(&self.events).context("Failed to serialize events")?;
+
+        let (temppath, mut tempfile) = tempfile().await.context("Unable to create tempfile")?;
+        tempfile
+            .write_all(&json)
+            .await
+            .context("Failed writing event store tempfile")?;
+        tempfile.flush().await?;
+        std::mem::drop(tempfile);
+
+        fs::rename(temppath, &store_path)
+            .await
+            .context("Failed to atomically replace event store")
     }
 
     fn next_id(&mut self, activity: Activity) -> Result<EventId> {
@@ -178,32 +257,30 @@ mod tests {
     use super::{Event, *};
     use std::iter;
 
-    fn add_events_to_manager(
+    async fn add_events_to_manager(
         manager: &mut EventManager,
         activity: Activity,
         indexes: impl IntoIterator<Item = u8>,
     ) {
         let user = User::default();
-        indexes
-            .into_iter()
-            .try_for_each(|idx| {
-                manager
-                    .add_event(Event {
-                        id: event_id(activity, idx),
-                        activity,
-                        datetime: Utc::now().with_timezone(&Tz::PST8PDT),
-                        description: "".to_string(),
-                        group_size: 1,
-                        creator: EventUser {
-                            id: user.id,
-                            name: user.name.clone(),
-                        },
-                        confirmed: vec![],
-                        alternates: vec![],
-                    })
-                    .and(Ok(()))
-            })
-            .expect("Error while adding test events")
+        for index in indexes {
+            manager
+                .add_event(Event {
+                    id: event_id(activity, index),
+                    activity,
+                    datetime: Utc::now().with_timezone(&Tz::PST8PDT),
+                    description: "".to_string(),
+                    group_size: 1,
+                    creator: EventUser {
+                        id: user.id,
+                        name: user.name.clone(),
+                    },
+                    confirmed: vec![],
+                    alternates: vec![],
+                })
+                .await
+                .expect("Error while adding test events");
+        }
     }
 
     const VOG: Activity = Activity::VaultOfGlass;
@@ -217,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_next_id_advances() {
-        let mut manager = EventManager::new();
+        let mut manager = EventManager::default();
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 1));
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 2));
         // Other activities are unaffected.
@@ -225,52 +302,52 @@ mod tests {
         assert_eq!(manager.next_id(GOS).unwrap(), event_id(GOS, 2));
     }
 
-    #[test]
-    fn test_next_id_gaps() {
-        let mut manager = EventManager::new();
-        add_events_to_manager(&mut manager, VOG, (1u8..=20).chain(23u8..=50));
+    #[tokio::test]
+    async fn test_next_id_gaps() {
+        let mut manager = EventManager::default();
+        add_events_to_manager(&mut manager, VOG, (1u8..=20).chain(23u8..=50)).await;
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 21));
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 22));
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 51));
     }
 
-    #[test]
-    fn test_next_id_wraps() {
-        let mut manager = EventManager::new();
-        add_events_to_manager(&mut manager, VOG, (1u8..=41).chain(44u8..=255));
+    #[tokio::test]
+    async fn test_next_id_wraps() {
+        let mut manager = EventManager::default();
+        add_events_to_manager(&mut manager, VOG, (1u8..=41).chain(44u8..=255)).await;
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 42));
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 43));
         // Will wrap around and find the still unused indexes.
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 42));
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 43));
-        add_events_to_manager(&mut manager, VOG, iter::once(42));
+        add_events_to_manager(&mut manager, VOG, iter::once(42)).await;
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 43));
     }
 
-    #[test]
-    fn test_next_exhausted() {
-        let mut manager = EventManager::new();
-        add_events_to_manager(&mut manager, VOG, 1u8..=255);
+    #[tokio::test]
+    async fn test_next_exhausted() {
+        let mut manager = EventManager::default();
+        add_events_to_manager(&mut manager, VOG, 1u8..=255).await;
         assert!(manager.next_id(VOG).is_err());
         // Other activities are unaffected.
         assert_eq!(manager.next_id(GOS).unwrap(), event_id(GOS, 1));
     }
 
-    #[test]
-    fn test_create_event() {
-        let mut manager = EventManager::new();
+    #[tokio::test]
+    async fn test_create_event() {
+        let mut manager = EventManager::default();
         let t = Utc::now().with_timezone(&Tz::PST8PDT);
         let user = User::default();
         assert_eq!(
-            manager.create_event(&user, VOG, t, "").unwrap().id,
+            manager.create_event(&user, VOG, t, "").await.unwrap().id,
             event_id(VOG, 1)
         );
         assert_eq!(
-            manager.create_event(&user, VOG, t, "").unwrap().id,
+            manager.create_event(&user, VOG, t, "").await.unwrap().id,
             event_id(VOG, 2)
         );
         assert_eq!(
-            manager.create_event(&user, GOS, t, "").unwrap().id,
+            manager.create_event(&user, GOS, t, "").await.unwrap().id,
             event_id(GOS, 1)
         );
     }

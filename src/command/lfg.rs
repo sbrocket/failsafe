@@ -173,7 +173,10 @@ impl<T: LfgCreateActivity> LeafCommand for T {
 
             let mut type_map = ctx.data.write().await;
             let event_manager = type_map.get_mut::<EventManager>().unwrap();
-            let event = match event_manager.create_event(&user, activity, datetime, description) {
+            let event = match event_manager
+                .create_event(&user, activity, datetime, description)
+                .await
+            {
                 Ok(event) => event,
                 Err(err) => {
                     if let Err(edit_err) = interaction
