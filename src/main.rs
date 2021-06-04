@@ -13,6 +13,7 @@ mod activity;
 
 mod command;
 mod event;
+mod time;
 mod util;
 
 #[derive(Default)]

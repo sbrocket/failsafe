@@ -2,12 +2,10 @@ use super::{CommandOption, LeafCommand};
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
+    time::parse_datetime,
     util::*,
 };
 use anyhow::{format_err, Result};
-use chrono::{DateTime, FixedOffset, TimeZone, Utc};
-use dtparse::Parser;
-use lazy_static::lazy_static;
 use paste::paste;
 use serde_json::Value;
 use serenity::{
@@ -19,7 +17,7 @@ use serenity::{
     },
     utils::MessageBuilder,
 };
-use std::{collections::HashMap, concat, iter, time::Duration};
+use std::{concat, time::Duration};
 use tracing::debug;
 
 define_command!(Lfg, "lfg", "Create and interact with scheduled events",
@@ -128,8 +126,7 @@ impl<T: LfgCreateActivity> LeafCommand for T {
 
         let send_response = |content| {
             interaction.create_interaction_response(&ctx, |resp| {
-                resp.kind(InteractionResponseType::ChannelMessageWithSource)
-                    .interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
+                resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
             })
         };
 
@@ -188,55 +185,4 @@ impl<T: LfgCreateActivity> LeafCommand for T {
             .await?;
         Ok(())
     }
-}
-
-// TODO: Expand list of supported timezones.
-// TODO: Figure out how best to handle DST. "PST"/"PDT" should probably do the same thing based on
-// current DST status, since users aren't going to be precise. This currently uses DST active
-// values.
-lazy_static! {
-    static ref TZINFO: HashMap<String, i32> = {
-        vec![
-            (["ET", "EST", "EDT"], 4),
-            (["CT", "CST", "CDT"], 5),
-            (["MT", "MST", "MDT"], 6),
-            (["PT", "PST", "PDT"], 7),
-        ]
-        .into_iter()
-        .map(|(tzs, offset)| {
-            tzs.iter()
-                .map(|s| s.to_string())
-                .zip(iter::repeat(offset * 3600))
-                .collect::<Vec<_>>()
-        })
-        .flatten()
-        .collect()
-    };
-}
-
-// TODO: This is very basic and can be improved but it does the basics.
-// TODO: Would be neat to support relative dates, e.g. "8PM PT Friday"
-fn parse_datetime(input: impl AsRef<str>) -> Result<DateTime<Utc>> {
-    let input = input.as_ref();
-    let (naive, tz_offset, _) = Parser::default().parse(
-        input,
-        Some(false),
-        Some(false),
-        false,
-        false,
-        None,
-        false,
-        &TZINFO,
-    )?;
-
-    // Use the parsed timezone or assume PDT timezone.
-    let datetime = match tz_offset {
-        Some(tz_offset) => tz_offset,
-        None => FixedOffset::east(*TZINFO.get("PT").unwrap()),
-    }
-    .from_local_datetime(&naive)
-    .single();
-    datetime
-        .map(|dt| DateTime::<Utc>::from(dt))
-        .ok_or(format_err!("Ambiguous local time"))
 }
