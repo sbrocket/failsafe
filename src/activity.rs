@@ -146,6 +146,13 @@ mod tests {
     }
 
     #[test]
+    fn activity_prefixes_alphabetic() {
+        Activity::into_enum_iter().for_each(|a| {
+            assert!(a.id_prefix().chars().all(|c| c.is_ascii_alphabetic()));
+        })
+    }
+
+    #[test]
     fn max_activities_per_type() {
         ActivityType::into_enum_iter().for_each(|ty| {
             assert!(Activity::activities_with_type(ty).count() <= 25);
