@@ -6,7 +6,11 @@ use enum_iterator::IntoEnumIterator;
 use lazy_static::lazy_static;
 use std::{collections::HashMap, iter};
 
-const TZ_HACK_BASE: i32 = 100;
+// Using a base that meets ((base % 60) == 1) means that we have the largest possible fake offset
+// space without the possibility of collisions from dtparse parsing a UTC offset like "-05:00" which
+// only has minute precision.
+const TZ_HACK_BASE: u32 = 61;
+static_assertions::const_assert!(TzHack::VARIANT_COUNT + (TZ_HACK_BASE as usize % 60) < 60);
 
 // This macro defines an enum that lists all the chrono_tz::Tz timezones that are used below. To
 // work around dtparse::Parser requiring tzinfos to be defined in terms of a fixed offset (used with
@@ -22,7 +26,7 @@ macro_rules! used_timezones {
 
         impl TzHack {
             pub fn fake_offset(&self) -> i32 {
-                TZ_HACK_BASE + *self as i32
+                TZ_HACK_BASE as i32 + *self as i32
             }
 
             fn timezone(&self) -> Tz {
@@ -33,7 +37,7 @@ macro_rules! used_timezones {
 
             pub fn fake_offset_to_timezone(offset: i32) -> Result<Tz> {
                 Self::into_enum_iter()
-                    .find(|e| offset == TZ_HACK_BASE + *e as i32)
+                    .find(|e| offset == TZ_HACK_BASE as i32 + *e as i32)
                     .map(|e| e.timezone())
                     .ok_or_else(|| format_err!("Got unexpected offset: {}", offset))
             }
