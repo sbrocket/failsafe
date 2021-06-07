@@ -2,7 +2,7 @@ use super::{CommandOption, LeafCommand};
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
-    event::{Event, EventId, EventManager},
+    event::{Event, EventEmbedMessage, EventHandle, EventId, EventManager},
     time::parse_datetime,
     util::*,
 };
@@ -54,7 +54,7 @@ with_activity_types! { define_create_commands }
 fn get_event_from_str(
     event_manager: &EventManager,
     id_str: impl AsRef<str>,
-) -> Result<&Event, String> {
+) -> Result<EventHandle<'_>, String> {
     let id_str = id_str.as_ref();
     match EventId::from_str(&id_str) {
         Ok(event_id) => match event_manager.get_event(&event_id) {
@@ -70,6 +70,7 @@ fn get_event_from_str(
 /// Runs the given closure on the matching Event, returning the message it generates or else an
 /// error message to use in the interaction reponse.
 async fn edit_event_from_str(
+    ctx: &Context,
     event_manager: &mut EventManager,
     id_str: impl AsRef<str>,
     edit_fn: impl FnOnce(&mut Event) -> String,
@@ -78,7 +79,7 @@ async fn edit_event_from_str(
     match EventId::from_str(&id_str) {
         Ok(event_id) => {
             event_manager
-                .edit_event(&event_id, |event| match event {
+                .edit_event(ctx, &event_id, |event| match event {
                     Some(event) => edit_fn(event),
                     None => format!("I couldn't find an event with ID '{}'", event_id),
                 })
@@ -115,16 +116,17 @@ impl LeafCommand for LfgJoin {
 
         let mut type_map = ctx.data.write().await;
         let event_manager = type_map.get_mut::<EventManager>().unwrap();
-        let edit_result =
-            edit_event_from_str(event_manager, &event_id, |event| match event.join(&user) {
-                Ok(()) => format!(
-                    "Added you to the {} event at {}!",
-                    event.activity,
-                    event.formatted_datetime()
-                ),
-                Err(_) => "You're already in that event!".to_owned(),
-            })
-            .await;
+        let edit_result = edit_event_from_str(&ctx, event_manager, &event_id, |event| match event
+            .join(&user)
+        {
+            Ok(()) => format!(
+                "Added you to the {} event at {}!",
+                event.activity,
+                event.formatted_datetime()
+            ),
+            Err(_) => "You're already in that event!".to_owned(),
+        })
+        .await;
         let content = match edit_result {
             Ok(msg) => msg,
             Err(err) => {
@@ -166,16 +168,27 @@ impl LeafCommand for LfgShow {
 
         let type_map = ctx.data.read().await;
         let event_manager = type_map.get::<EventManager>().unwrap();
+        let mut event = None;
         interaction
             .create_interaction_response(&ctx, |resp| {
                 resp.interaction_response_data(|msg| {
                     match get_event_from_str(event_manager, &event_id) {
-                        Ok(event) => msg.set_embed(event.as_embed()),
+                        Ok(e) => {
+                            let ret = msg.add_embed(e.as_embed());
+                            event = Some(e);
+                            ret
+                        }
                         Err(content) => msg.content(content),
                     }
                 })
             })
             .await?;
+        if let Some(event) = event {
+            let msg = interaction.get_interaction_response(&ctx).await?;
+            event
+                .keep_embed_updated(EventEmbedMessage::Normal(msg.channel_id, msg.id))
+                .await?;
+        }
         Ok(())
     }
 }
@@ -307,6 +320,9 @@ impl<T: LfgCreateActivity> LeafCommand for T {
                 })
                 .await
                 .context("Failed to edit response after creating event")?;
+            event
+                .keep_embed_updated(EventEmbedMessage::EphemeralResponse(interaction.clone()))
+                .await?;
         } else {
             // Timed out waiting for the description, send a followup message so that the user can
             // see the description request still and so the mention works.

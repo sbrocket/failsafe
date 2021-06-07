@@ -1,12 +1,14 @@
 use crate::{activity::Activity, time::serialize_datetime_tz, util::*};
-use anyhow::{ensure, format_err, Context as _, Error, Result};
+use anyhow::{format_err, Context as _, Error, Result};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
+use futures::prelude::*;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
     builder::CreateEmbed,
+    client::Context,
     model::{id::UserId, prelude::*},
     prelude::TypeMapKey,
 };
@@ -16,8 +18,10 @@ use std::{
     iter::successors,
     path::PathBuf,
     str::FromStr,
+    sync::Arc,
 };
-use tokio::{fs, io::AsyncWriteExt};
+use tokio::{fs, io::AsyncWriteExt, sync::RwLock};
+use tracing::{error, info, warn};
 
 /// Unique identifier for an Event.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
@@ -73,7 +77,7 @@ impl TryFrom<String> for EventId {
 
 // TODO: We currently persist the last seen username. Need to make sure these stay up to date as we
 // get new user info.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EventUser {
     pub id: UserId,
     pub name: String,
@@ -88,8 +92,44 @@ impl From<&User> for EventUser {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum EventEmbedMessage {
+    Normal(ChannelId, MessageId),
+    // TODO: The interaction token expires after 15 minutes. Don't try to update after the token has
+    // expired, and consider deleting the response before then as well.
+    EphemeralResponse(Interaction),
+}
+
+impl EventEmbedMessage {
+    fn strip_unneeded_fields(&mut self) {
+        match self {
+            EventEmbedMessage::EphemeralResponse(interaction) => {
+                interaction.data = None;
+                interaction.guild_id = None;
+                interaction.channel_id = None;
+                interaction.member = None;
+                interaction.user = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl PartialEq for EventEmbedMessage {
+    fn eq(&self, other: &Self) -> bool {
+        use EventEmbedMessage::*;
+        match (self, other) {
+            (Normal(a1, a2), Normal(b1, b2)) => a1 == b1 && a2 == b2,
+            (EphemeralResponse(a), EphemeralResponse(b)) => a.id == b.id,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for EventEmbedMessage {}
+
 /// A single scheduled event.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Event {
     pub id: EventId,
     pub activity: Activity,
@@ -102,6 +142,13 @@ pub struct Event {
     // TODO: Need to make use of alternates. Distinguish between confirmed alts and unsure? Fill out
     // partial groups with alts, distinguish them with italics and "(alt)"?
     pub alternates: Vec<EventUser>,
+
+    // Messages that this event's embed has been added to, and which need to be updated when the
+    // event is updated.
+    // TODO: This data probably needs to move out of the Event so that the mappings of messages to
+    // events can be more easily modified for posting events to an event channel.
+    #[serde(with = "serialize_arc_rwlock")]
+    embed_messages: Arc<RwLock<Vec<EventEmbedMessage>>>,
 }
 
 // This is a debugging feature, to allow testing the bot with a small number of users.
@@ -129,8 +176,6 @@ impl Event {
             .pad_using(1, |_| &[])
     }
 
-    // TODO: The event needs to keep track of all the messages that exist with an event embed, so it
-    // can update them as the event is modified.
     pub fn as_embed(&self) -> CreateEmbed {
         let mut embed = CreateEmbed::default();
         embed
@@ -153,86 +198,109 @@ impl Event {
                 true,
             );
         });
-
         embed
+    }
+
+    /// Adds a new message that contains this event's embed and which should be kept up to date as
+    /// the event is modified.
+    async fn keep_embed_updated(&self, mut message: EventEmbedMessage) {
+        let mut msgs = self.embed_messages.write().await;
+        if msgs.contains(&message) {
+            warn!("Event {} already tracking message {:?}", self.id, message);
+            return;
+        }
+        message.strip_unneeded_fields();
+        msgs.push(message);
+
+        // TODO: Cleanup any expired EphemeralResponse entries while we're holding the write lock?
+    }
+
+    /// Asychronously (in a spawned task) update the embeds in tracked messages.
+    fn start_updating_embeds(&self, ctx: Context) {
+        let embed = self.as_embed();
+        let messages = self.embed_messages.clone();
+        let update_fut = async move {
+            let messages = messages.read().await;
+            future::join_all(messages.iter().map(|msg| {
+                let ctx = &ctx;
+                let embed = &embed;
+                async move {
+                    match msg {
+                        EventEmbedMessage::Normal(chan_id, msg_id) => {
+                            chan_id
+                                .edit_message(ctx, msg_id, |edit| {
+                                    edit.embed(|e| {
+                                        *e = embed.clone();
+                                        e
+                                    })
+                                })
+                                .await
+                        }
+                        EventEmbedMessage::EphemeralResponse(interaction) => {
+                            interaction
+                                .edit_original_interaction_response(ctx, |resp| {
+                                    resp.set_embeds(vec![embed.clone()])
+                                })
+                                .await
+                        }
+                    }
+                    .context("Failed to edit message")
+                }
+            }))
+            .await
+        };
+
+        let event_id = self.id;
+        tokio::spawn(async move {
+            let results = update_fut.await;
+            let (successes, failures): (Vec<_>, Vec<_>) =
+                results.into_iter().partition(Result::is_ok);
+            let count = successes.len() + failures.len();
+            if failures.is_empty() {
+                info!("Successfully updated embeds for event {}", event_id);
+            } else if successes.is_empty() {
+                error!(
+                    "All ({}) embeds failed to update for event {}",
+                    count, event_id
+                );
+                failures.into_iter().for_each(|f| error!("{:?}", f));
+            } else {
+                error!(
+                    "Some ({}/{}) embeds failed to update for event {}",
+                    failures.len(),
+                    count,
+                    event_id
+                );
+                failures.into_iter().for_each(|f| error!("{:?}", f));
+            }
+        });
     }
 }
 
-/// Manages a single server's worth of events.
-#[cfg_attr(test, derive(Default))]
-pub struct EventManager {
-    store_path: Option<PathBuf>,
+#[derive(Default)]
+struct EventStore {
+    path: Option<PathBuf>,
     events: BTreeMap<EventId, Event>,
-    next_id: HashMap<Activity, u8>,
 }
 
-impl EventManager {
+impl EventStore {
     pub async fn new(store_path: impl Into<PathBuf>) -> Result<Self> {
-        let store_path = store_path.into();
-        let events = match fs::read(&store_path).await {
+        let path = store_path.into();
+        let events = match fs::read(&path).await {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::default()),
             Ok(store_bytes) => serde_json::from_slice(&store_bytes)
                 .context("Failed to deserialize EventManger's event data"),
             Err(err) => Err(Error::from(err).context("Failed to read event store")),
         }?;
 
-        Ok(EventManager {
-            store_path: Some(store_path),
+        Ok(EventStore {
+            path: Some(path),
             events,
-            next_id: Default::default(),
         })
     }
 
-    pub async fn create_event(
-        &mut self,
-        creator: &User,
-        activity: Activity,
-        datetime: DateTime<Tz>,
-        description: impl Into<String>,
-    ) -> Result<&Event> {
-        let id = self.next_id(activity)?;
-        let description = description.into();
-        self.add_event(Event {
-            id,
-            activity,
-            datetime,
-            description,
-            group_size: activity.default_group_size(),
-            creator: creator.into(),
-            confirmed: vec![],
-            alternates: vec![],
-        })
-        .await
-    }
-
-    async fn add_event(&mut self, event: Event) -> Result<&Event> {
-        ensure!(
-            !self.events.contains_key(&event.id),
-            "Event already exists with ID {}",
-            &event.id
-        );
-        let key = event.id;
-        self.events.insert(key, event);
-        self.update_store().await?;
-        Ok(self.events.get(&key).unwrap())
-    }
-
-    pub fn get_event(&self, id: &EventId) -> Option<&Event> {
-        self.events.get(&id)
-    }
-
-    pub async fn edit_event<T>(
-        &mut self,
-        id: &EventId,
-        edit_fn: impl FnOnce(Option<&mut Event>) -> T,
-    ) -> Result<T> {
-        let ret = edit_fn(self.events.get_mut(&id));
-        self.update_store().await?;
-        Ok(ret)
-    }
-
-    async fn update_store(&mut self) -> Result<()> {
-        let store_path = match &self.store_path {
+    pub async fn save(&self) -> Result<()> {
+        let path = match &self.path {
             Some(path) => path,
             None => return Ok(()),
         };
@@ -247,16 +315,125 @@ impl EventManager {
         tempfile.flush().await?;
         std::mem::drop(tempfile);
 
-        fs::rename(temppath, &store_path)
+        fs::rename(temppath, &path)
             .await
             .context("Failed to atomically replace event store")
+    }
+}
+
+pub struct EventHandle<'a> {
+    store: &'a EventStore,
+    event: &'a Event,
+}
+
+impl EventHandle<'_> {
+    pub async fn keep_embed_updated(&self, msg: EventEmbedMessage) -> Result<()> {
+        self.event.keep_embed_updated(msg).await;
+        self.store.save().await
+    }
+}
+
+impl std::ops::Deref for EventHandle<'_> {
+    type Target = Event;
+
+    fn deref(&self) -> &Self::Target {
+        &self.event
+    }
+}
+
+/// Manages a single server's worth of events.
+#[cfg_attr(test, derive(Default))]
+pub struct EventManager {
+    store: EventStore,
+    next_id: HashMap<Activity, u8>,
+}
+
+impl EventManager {
+    pub async fn new(store_path: impl Into<PathBuf>) -> Result<Self> {
+        Ok(EventManager {
+            store: EventStore::new(store_path).await?,
+            next_id: Default::default(),
+        })
+    }
+
+    pub async fn create_event(
+        &mut self,
+        creator: &User,
+        activity: Activity,
+        datetime: DateTime<Tz>,
+        description: impl Into<String>,
+    ) -> Result<EventHandle<'_>> {
+        let id = self.next_id(activity)?;
+        let description = description.into();
+        self.store.events.insert(
+            id,
+            Event {
+                id,
+                activity,
+                datetime,
+                description,
+                group_size: activity.default_group_size(),
+                creator: creator.into(),
+                confirmed: vec![],
+                alternates: vec![],
+                embed_messages: Default::default(),
+            },
+        );
+        self.store.save().await?;
+
+        let event = self.store.events.get(&id).unwrap();
+        Ok(EventHandle {
+            store: &self.store,
+            event,
+        })
+    }
+
+    #[cfg(test)]
+    async fn add_event(&mut self, event: Event) -> Result<&Event> {
+        anyhow::ensure!(
+            !self.store.events.contains_key(&event.id),
+            "Event already exists with ID {}",
+            &event.id
+        );
+        let key = event.id;
+        self.store.events.insert(key, event);
+        self.store.save().await?;
+        Ok(self.store.events.get(&key).unwrap())
+    }
+
+    pub fn get_event(&self, id: &EventId) -> Option<EventHandle<'_>> {
+        let store = &self.store;
+        store
+            .events
+            .get(&id)
+            .map(|event| EventHandle { store, event })
+    }
+
+    /// Run the provided closure with a mutable reference to the event with the given ID, if one
+    /// exists. State is persisted to the store before this returns, and an async task started to
+    /// update event embeds.
+    pub async fn edit_event<T>(
+        &mut self,
+        ctx: &Context,
+        id: &EventId,
+        edit_fn: impl FnOnce(Option<&mut Event>) -> T,
+    ) -> Result<T> {
+        // This needs two lookups because edit_fn needs `&mut Event`, which would require passing it
+        // `&mut Option<&mut Event>`, but then it could also modify the Option out from under us
+        // (e.g. with `take()`).
+        let ret = edit_fn(self.store.events.get_mut(&id));
+        if let Some(event) = self.store.events.get(&id) {
+            event.start_updating_embeds(ctx.clone());
+            self.store.save().await?;
+        }
+        Ok(ret)
     }
 
     fn next_id(&mut self, activity: Activity) -> Result<EventId> {
         // We don't need to find the lowest unused ID or anything fancy, just find the next unused
         // ID and wrap once maxed out. next_id can be inaccurate or uninitialized for a given
         // activity type since we check the known events.
-        let events = &self.events;
+        let events = &self.store.events;
         let next = self.next_id.entry(activity).or_insert(1);
 
         let found_next = successors(Some(*next), |n| {
@@ -309,6 +486,7 @@ mod tests {
                     },
                     confirmed: vec![],
                     alternates: vec![],
+                    embed_messages: Default::default(),
                 })
                 .await
                 .expect("Error while adding test events");
