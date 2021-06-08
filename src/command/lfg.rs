@@ -7,6 +7,7 @@ use crate::{
     util::*,
 };
 use anyhow::{format_err, Context as _, Result};
+use chrono::Utc;
 use paste::paste;
 use serde_json::Value;
 use serenity::{
@@ -229,6 +230,8 @@ impl<T: LfgCreateActivity> LeafCommand for T {
         interaction: &Interaction,
         options: &Vec<ApplicationCommandInteractionDataOption>,
     ) -> Result<()> {
+        let recv_time = Utc::now();
+
         let user = interaction.get_user()?;
         let activity = match options.get_value("activity")? {
             Value::String(v) => Ok(v),
@@ -313,15 +316,19 @@ impl<T: LfgCreateActivity> LeafCommand for T {
             };
 
             // TODO: Add buttons to join event, post publicly
-            let content = "Your event has been created, Captain! Would you like to join it or have me post it publicly?";
+            let content = format!("Your event **{}** has been created, Captain!", event.id);
             interaction
                 .edit_original_interaction_response(&ctx, |resp| {
-                    resp.content(content).add_embed(event.as_embed())
+                    resp.content(&content).add_embed(event.as_embed())
                 })
                 .await
                 .context("Failed to edit response after creating event")?;
             event
-                .keep_embed_updated(EventEmbedMessage::EphemeralResponse(interaction.clone()))
+                .keep_embed_updated(EventEmbedMessage::EphemeralResponse(
+                    interaction.clone(),
+                    recv_time,
+                    content,
+                ))
                 .await?;
         } else {
             // Timed out waiting for the description, send a followup message so that the user can

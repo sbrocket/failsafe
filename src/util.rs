@@ -64,30 +64,3 @@ pub async fn tempfile() -> Result<(PathBuf, File)> {
     }
     Err(format_err!("Failed to create tempfile"))
 }
-
-pub mod serialize_arc_rwlock {
-    use std::sync::Arc;
-
-    use super::*;
-    use futures::executor::block_on;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use tokio::sync::RwLock;
-
-    pub fn serialize<S, V>(lock: &Arc<RwLock<V>>, s: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-        V: Serialize,
-    {
-        let value = block_on(lock.read());
-        Serialize::serialize(&*value, s)
-    }
-
-    pub fn deserialize<'de, D, V>(d: D) -> Result<Arc<RwLock<V>>, D::Error>
-    where
-        D: Deserializer<'de>,
-        V: Deserialize<'de>,
-    {
-        let value: V = Deserialize::deserialize(d)?;
-        Ok(Arc::new(RwLock::new(value)))
-    }
-}

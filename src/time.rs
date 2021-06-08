@@ -74,12 +74,12 @@ lazy_static! {
     };
 }
 
-// TODO: This is very basic and can be improved but it does the basics.
 // TODO: Would be neat to support relative dates, e.g. "8PM PT Friday"
 pub fn parse_datetime(input: impl AsRef<str>) -> Result<DateTime<Tz>> {
-    let input = input.as_ref();
+    // Convert input to all uppercase so that timezone comparison is case-insensitive.
+    let input = input.as_ref().to_ascii_uppercase();
     let (naive, tz_offset, _) = Parser::default().parse(
-        input,
+        &input,
         Some(false),
         Some(false),
         false,
@@ -89,7 +89,7 @@ pub fn parse_datetime(input: impl AsRef<str>) -> Result<DateTime<Tz>> {
         &TZINFO,
     )?;
 
-    // Use the parsed timezone or assume PDT timezone.
+    // Use the parsed timezone or assume PT timezone.
     match tz_offset {
         Some(tz_offset) => TzHack::fake_offset_to_timezone(tz_offset.local_minus_utc())
             .context("Fixed offset in datetime string?")?,

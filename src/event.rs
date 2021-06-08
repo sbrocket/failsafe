@@ -1,6 +1,6 @@
 use crate::{activity::Activity, time::serialize_datetime_tz, util::*};
 use anyhow::{format_err, Context as _, Error, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use futures::prelude::*;
 use itertools::Itertools;
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serenity::{
     builder::CreateEmbed,
     client::Context,
+    http::Http,
     model::{id::UserId, prelude::*},
     prelude::TypeMapKey,
 };
@@ -21,7 +22,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{fs, io::AsyncWriteExt, sync::RwLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Unique identifier for an Event.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
@@ -94,16 +95,31 @@ impl From<&User> for EventUser {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EventEmbedMessage {
+    // A "normal" message in a channel, either posted directly by the bot or a non-ephemeral
+    // interaction response.
     Normal(ChannelId, MessageId),
-    // TODO: The interaction token expires after 15 minutes. Don't try to update after the token has
-    // expired, and consider deleting the response before then as well.
-    EphemeralResponse(Interaction),
+    // An ephemeral interaction response, the time it was received, and the text of the response.
+    // These cannot be edited by message ID, only through the Edit Original Interaction Response
+    // endpoint, and then only within the 15 minute lifetime of the Interaction's token.
+    //
+    // As such, we will skip updating responses older than 15 minutes, and edit the responses to
+    // only include the given text at 14 minutes to avoid stale embeds in the user's chat
+    // scrollback.
+    EphemeralResponse(Interaction, DateTime<Utc>, String),
+}
+
+lazy_static! {
+    // Interaction tokens last 15 minutes, after which ephemeral responses can no longer be edited.
+    static ref INTERACTION_LIFETIME: Duration = Duration::minutes(15);
+
+    // The amount of time we wait before deleting an ephemeral response (to avoid stale embeds).
+    static ref EPHEMERAL_LIFETIME: Duration = *INTERACTION_LIFETIME - Duration::seconds(30);
 }
 
 impl EventEmbedMessage {
     fn strip_unneeded_fields(&mut self) {
         match self {
-            EventEmbedMessage::EphemeralResponse(interaction) => {
+            EventEmbedMessage::EphemeralResponse(interaction, ..) => {
                 interaction.data = None;
                 interaction.guild_id = None;
                 interaction.channel_id = None;
@@ -113,6 +129,52 @@ impl EventEmbedMessage {
             _ => {}
         }
     }
+
+    fn expired(&self) -> bool {
+        match self {
+            EventEmbedMessage::Normal(..) => false,
+            EventEmbedMessage::EphemeralResponse(_, recv, _) => {
+                Utc::now().signed_duration_since(recv.clone()) >= *INTERACTION_LIFETIME
+            }
+        }
+    }
+
+    fn schedule_ephemeral_response_cleanup(&self) {
+        if let EventEmbedMessage::EphemeralResponse(interaction, recv, content) = self {
+            if self.expired() {
+                return;
+            }
+
+            let delay = *EPHEMERAL_LIFETIME - Utc::now().signed_duration_since(recv.clone());
+            let delay = if delay < Duration::zero() {
+                std::time::Duration::new(0, 0)
+            } else {
+                delay.to_std().expect("Already checked <0, shouldn't fail")
+            };
+
+            let interaction = interaction.clone();
+            let recv = recv.clone();
+            let content = content.clone();
+            tokio::spawn(async move {
+                debug!(
+                    "Removing embeds from ephemeral response for interaction {} in {:?}",
+                    interaction.id, delay
+                );
+                tokio::time::sleep(delay).await;
+
+                let http = Http::new_with_application_id(interaction.application_id.into());
+                if let Err(err) = interaction
+                    .edit_original_interaction_response(&http, |resp| resp.content(content))
+                    .await
+                {
+                    error!(
+                        "Failed to remove embeds from ephemeral response for interaction received at {}: {:?}",
+                        recv, err
+                    );
+                }
+            });
+        }
+    }
 }
 
 impl PartialEq for EventEmbedMessage {
@@ -120,13 +182,49 @@ impl PartialEq for EventEmbedMessage {
         use EventEmbedMessage::*;
         match (self, other) {
             (Normal(a1, a2), Normal(b1, b2)) => a1 == b1 && a2 == b2,
-            (EphemeralResponse(a), EphemeralResponse(b)) => a.id == b.id,
+            (EphemeralResponse(a, ..), EphemeralResponse(b, ..)) => a.id == b.id,
             _ => false,
         }
     }
 }
 
 impl Eq for EventEmbedMessage {}
+
+type EmbedMessages = Arc<RwLock<Vec<EventEmbedMessage>>>;
+
+pub mod serialize_embed_messages {
+    use std::sync::Arc;
+
+    use super::*;
+    use futures::executor::block_on;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use tokio::sync::RwLock;
+
+    pub fn serialize<S>(lock: &EmbedMessages, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value = block_on(lock.read());
+        Serialize::serialize(&*value, s)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<EmbedMessages, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut value: Vec<EventEmbedMessage> = Deserialize::deserialize(d)?;
+
+        // Do some special steps after deserializing this. Remove any expired ephemeral responses
+        // that we no longer need to keep track of, and schedule cleanup for any not-yet-expired
+        // responses.
+        value.retain(|m| !m.expired());
+        value
+            .iter()
+            .for_each(|m| m.schedule_ephemeral_response_cleanup());
+
+        Ok(Arc::new(RwLock::new(value)))
+    }
+}
 
 /// A single scheduled event.
 #[derive(Debug, Serialize, Deserialize)]
@@ -147,8 +245,8 @@ pub struct Event {
     // event is updated.
     // TODO: This data probably needs to move out of the Event so that the mappings of messages to
     // events can be more easily modified for posting events to an event channel.
-    #[serde(with = "serialize_arc_rwlock")]
-    embed_messages: Arc<RwLock<Vec<EventEmbedMessage>>>,
+    #[serde(with = "serialize_embed_messages")]
+    embed_messages: EmbedMessages,
 }
 
 // This is a debugging feature, to allow testing the bot with a small number of users.
@@ -210,9 +308,11 @@ impl Event {
             return;
         }
         message.strip_unneeded_fields();
+        message.schedule_ephemeral_response_cleanup();
         msgs.push(message);
 
-        // TODO: Cleanup any expired EphemeralResponse entries while we're holding the write lock?
+        // Cleanup any expired EphemeralResponse entries while we're holding the write lock
+        msgs.retain(|m| !m.expired());
     }
 
     /// Asychronously (in a spawned task) update the embeds in tracked messages.
@@ -221,7 +321,7 @@ impl Event {
         let messages = self.embed_messages.clone();
         let update_fut = async move {
             let messages = messages.read().await;
-            future::join_all(messages.iter().map(|msg| {
+            future::join_all(messages.iter().filter(|m| !m.expired()).map(|msg| {
                 let ctx = &ctx;
                 let embed = &embed;
                 async move {
@@ -236,7 +336,7 @@ impl Event {
                                 })
                                 .await
                         }
-                        EventEmbedMessage::EphemeralResponse(interaction) => {
+                        EventEmbedMessage::EphemeralResponse(interaction, ..) => {
                             interaction
                                 .edit_original_interaction_response(ctx, |resp| {
                                     resp.set_embeds(vec![embed.clone()])
