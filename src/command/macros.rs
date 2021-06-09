@@ -23,7 +23,7 @@ macro_rules! define_command {
             }
         }
     };
-    ($ty:ident, $name:literal, $descr:expr, Subcommands: [$($sub_ty:ident),+ $(,)?]) => {
+    ($ty:ident, $name:literal, $descr:expr, Subcommands: [$($sub_ty:path),+ $(,)?]) => {
         #[derive(Debug)]
         pub struct $ty {
             subcommands: $crate::command::SubcommandsMap,
@@ -33,7 +33,7 @@ macro_rules! define_command {
             pub fn new() -> Self {
                 Self {
                     subcommands: vec![
-                        $(Box::new($sub_ty::new()) as Box<dyn $crate::command::Command>),+
+                        $(Box::new(<$sub_ty>::new()) as Box<dyn $crate::command::Command>),+
                     ]
                     .into_iter()
                     .map(|c| (c.name(), c))

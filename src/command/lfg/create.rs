@@ -1,8 +1,9 @@
+use super::EPHEMERAL_FLAG;
 use super::{CommandOption, LeafCommand};
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
-    event::{Event, EventEmbedMessage, EventHandle, EventId, EventManager},
+    event::{EventEmbedMessage, EventManager},
     time::parse_datetime,
     util::*,
 };
@@ -13,19 +14,11 @@ use serde_json::Value;
 use serenity::{
     async_trait,
     client::Context,
-    model::interactions::{
-        ApplicationCommandInteractionDataOption, Interaction,
-        InteractionApplicationCommandCallbackDataFlags,
-    },
+    model::interactions::{ApplicationCommandInteractionDataOption, Interaction},
     utils::MessageBuilder,
 };
-use std::{concat, str::FromStr, time::Duration};
+use std::time::Duration;
 use tracing::{debug, error};
-
-define_command!(Lfg, "lfg", "Create and interact with scheduled events",
-                Subcommands: [LfgJoin, LfgShow, LfgCreate]);
-define_command!(LfgJoin, "join", "Join an existing event", Leaf);
-define_command!(LfgShow, "show", "Display an existing event", Leaf);
 
 macro_rules! define_create_commands {
     ($($enum_name:ident: ($name:literal, $cmd:literal)),+ $(,)?) => {
@@ -51,156 +44,11 @@ macro_rules! define_create_commands {
 
 with_activity_types! { define_create_commands }
 
-/// Returns the matching Event or else an error message to use in the interaction reponse.
-fn get_event_from_str(
-    event_manager: &EventManager,
-    id_str: impl AsRef<str>,
-) -> Result<EventHandle<'_>, String> {
-    let id_str = id_str.as_ref();
-    match EventId::from_str(&id_str) {
-        Ok(event_id) => match event_manager.get_event(&event_id) {
-            Some(event) => Ok(event),
-            None => Err(format!("I couldn't find an event with ID '{}'", event_id)),
-        },
-        Err(_) => {
-            Err("That's not a valid event ID, Captain. They look like this: `dsc123`".to_owned())
-        }
-    }
-}
-
-/// Runs the given closure on the matching Event, returning the message it generates or else an
-/// error message to use in the interaction reponse.
-async fn edit_event_from_str(
-    ctx: &Context,
-    event_manager: &mut EventManager,
-    id_str: impl AsRef<str>,
-    edit_fn: impl FnOnce(&mut Event) -> String,
-) -> Result<String> {
-    let id_str = id_str.as_ref();
-    match EventId::from_str(&id_str) {
-        Ok(event_id) => {
-            event_manager
-                .edit_event(ctx, &event_id, |event| match event {
-                    Some(event) => edit_fn(event),
-                    None => format!("I couldn't find an event with ID '{}'", event_id),
-                })
-                .await
-        }
-        Err(_) => {
-            Ok("That's not a valid event ID, Captain. They look like this: `dsc123`".to_owned())
-        }
-    }
-}
-
-#[async_trait]
-impl LeafCommand for LfgJoin {
-    fn options(&self) -> Vec<CommandOption> {
-        vec![CommandOption {
-            name: "event_id",
-            description: "Event ID",
-            required: true,
-            option_type: OptionType::String(vec![]),
-        }]
-    }
-
-    async fn handle_interaction(
-        &self,
-        ctx: &Context,
-        interaction: &Interaction,
-        options: &Vec<ApplicationCommandInteractionDataOption>,
-    ) -> Result<()> {
-        let user = interaction.get_user()?;
-        let event_id = match options.get_value("event_id")? {
-            Value::String(v) => Ok(v),
-            v => Err(format_err!("Unexpected value type: {:?}", v)),
-        }?;
-
-        let mut type_map = ctx.data.write().await;
-        let event_manager = type_map.get_mut::<EventManager>().unwrap();
-        let edit_result = edit_event_from_str(&ctx, event_manager, &event_id, |event| match event
-            .join(&user)
-        {
-            Ok(()) => format!(
-                "Added you to the {} event at {}!",
-                event.activity,
-                event.formatted_datetime()
-            ),
-            Err(_) => "You're already in that event!".to_owned(),
-        })
-        .await;
-        let content = match edit_result {
-            Ok(msg) => msg,
-            Err(err) => {
-                error!("Failed to edit event: {:?}", err);
-                "Sorry Captain, I seem to be having trouble adding you to that event...".to_owned()
-            }
-        };
-
-        interaction
-            .create_interaction_response(&ctx, |resp| {
-                resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-            })
-            .await?;
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl LeafCommand for LfgShow {
-    fn options(&self) -> Vec<CommandOption> {
-        vec![CommandOption {
-            name: "event_id",
-            description: "Event ID",
-            required: true,
-            option_type: OptionType::String(vec![]),
-        }]
-    }
-
-    async fn handle_interaction(
-        &self,
-        ctx: &Context,
-        interaction: &Interaction,
-        options: &Vec<ApplicationCommandInteractionDataOption>,
-    ) -> Result<()> {
-        let event_id = match options.get_value("event_id")? {
-            Value::String(v) => Ok(v),
-            v => Err(format_err!("Unexpected value type: {:?}", v)),
-        }?;
-
-        let type_map = ctx.data.read().await;
-        let event_manager = type_map.get::<EventManager>().unwrap();
-        let mut event = None;
-        interaction
-            .create_interaction_response(&ctx, |resp| {
-                resp.interaction_response_data(|msg| {
-                    match get_event_from_str(event_manager, &event_id) {
-                        Ok(e) => {
-                            let ret = msg.add_embed(e.as_embed());
-                            event = Some(e);
-                            ret
-                        }
-                        Err(content) => msg.content(content),
-                    }
-                })
-            })
-            .await?;
-        if let Some(event) = event {
-            let msg = interaction.get_interaction_response(&ctx).await?;
-            event
-                .keep_embed_updated(EventEmbedMessage::Normal(msg.channel_id, msg.id))
-                .await?;
-        }
-        Ok(())
-    }
-}
-
 pub trait LfgCreateActivity: LeafCommand {
     const ACTIVITY: ActivityType;
 }
 
 const LFG_CREATE_DESCRIPTION_TIMEOUT_SEC: u64 = 60;
-const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
-    InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
 
 #[async_trait]
 impl<T: LfgCreateActivity> LeafCommand for T {
