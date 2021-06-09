@@ -9,7 +9,7 @@ use serenity::{
         interactions::{
             ApplicationCommand, ApplicationCommandInteractionData,
             ApplicationCommandInteractionDataOption, ApplicationCommandOptionType, Interaction,
-            InteractionType,
+            InteractionData,
         },
     },
 };
@@ -137,18 +137,16 @@ impl CommandManager {
     ) -> Result<()> {
         debug!("Received interaction: {:?}", interaction);
 
-        if interaction.kind != InteractionType::ApplicationCommand {
-            return Err(format_err!(
-                "Unexpected interaction type: {:?}",
-                interaction
-            ));
-        }
-
         // TODO: Parse the options into an easier to consume form.
-        let data = interaction
-            .data
-            .as_ref()
-            .expect("ApplicationCommand interactions should always have data");
+        let data = match interaction.data.as_ref() {
+            Some(InteractionData::ApplicationCommand(data)) => data,
+            _ => {
+                return Err(format_err!(
+                    "Unexpected interaction type: {:?}",
+                    interaction
+                ))
+            }
+        };
         let (cmd_name, leaf, options) = self.find_leaf_command(data)?;
 
         debug!("'{}' handling interaction", cmd_name);

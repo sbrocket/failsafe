@@ -29,4 +29,4 @@ features = ["builder", "cache", "client", "collector", "gateway", "http", "model
 # Temporarily build from own fork with not-yet-merged PRs applied
 #version = "0.10.7"
 git = "https://github.com/sbrocket/serenity.git"
-rev = "84737b97899945f7b940a0d15cd2411fcad7a12"
+rev = "f54afb6ec1d6f228ab2fec0da3fd8dec1c90883a"
