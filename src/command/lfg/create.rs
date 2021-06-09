@@ -82,14 +82,16 @@ impl<T: LfgCreateActivity> LeafCommand for T {
 
         let user = interaction.get_user()?;
         let activity = match options.get_value("activity")? {
-            Value::String(v) => Ok(v),
-            v => Err(format_err!("Unexpected value type: {:?}", v)),
+            Some(Value::String(v)) => Ok(v),
+            Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+            None => Err(format_err!("Missing required activity value")),
         }?;
         let activity = Activity::activity_with_id_prefix(activity)
             .ok_or_else(|| format_err!("Unexpected activity value: {:?}", activity))?;
         let datetime = match options.get_value("datetime")? {
-            Value::String(v) => Ok(v),
-            v => Err(format_err!("Unexpected value type: {:?}", v)),
+            Some(Value::String(v)) => Ok(v),
+            Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+            None => Err(format_err!("Missing required datetime value")),
         }?;
 
         let send_response = |content| {

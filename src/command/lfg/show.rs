@@ -32,8 +32,9 @@ impl LeafCommand for LfgShow {
         options: &Vec<ApplicationCommandInteractionDataOption>,
     ) -> Result<()> {
         let event_id = match options.get_value("event_id")? {
-            Value::String(v) => Ok(v),
-            v => Err(format_err!("Unexpected value type: {:?}", v)),
+            Some(Value::String(v)) => Ok(v),
+            Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+            None => Err(format_err!("Missing required event_id value")),
         }?;
 
         let type_map = ctx.data.read().await;

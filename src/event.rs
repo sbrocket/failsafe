@@ -93,6 +93,36 @@ impl From<&User> for EventUser {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum JoinKind {
+    Confirmed,
+    Alternate,
+    Maybe,
+}
+
+impl FromStr for JoinKind {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "confirmed" => Ok(JoinKind::Confirmed),
+            "alt" => Ok(JoinKind::Alternate),
+            "maybe" => Ok(JoinKind::Maybe),
+            _ => Err(format_err!("Unknown join kind: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for JoinKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JoinKind::Confirmed => f.write_str("confirmed"),
+            JoinKind::Alternate => f.write_str("a confirmed alt"),
+            JoinKind::Maybe => f.write_str("a maybe"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EventEmbedMessage {
     // A "normal" message in a channel, either posted directly by the bot or a non-ephemeral
@@ -240,6 +270,8 @@ pub struct Event {
     // TODO: Need to make use of alternates. Distinguish between confirmed alts and unsure? Fill out
     // partial groups with alts, distinguish them with italics and "(alt)"?
     pub alternates: Vec<EventUser>,
+    #[serde(default)]
+    pub maybe: Vec<EventUser>,
 
     // Messages that this event's embed has been added to, and which need to be updated when the
     // event is updated.
@@ -256,11 +288,40 @@ lazy_static! {
 }
 
 impl Event {
-    pub fn join(&mut self, user: &User) -> Result<()> {
-        if !*ALLOW_DUPLICATE_JOIN && self.confirmed.iter().any(|u| u.id == user.id) {
+    pub fn join(&mut self, user: &User, kind: JoinKind) -> Result<()> {
+        let list = match kind {
+            JoinKind::Confirmed => &mut self.confirmed,
+            JoinKind::Alternate => &mut self.alternates,
+            JoinKind::Maybe => &mut self.maybe,
+        };
+        if !*ALLOW_DUPLICATE_JOIN && list.iter().any(|u| u.id == user.id) {
             return Err(format_err!("User already in event"));
         }
-        self.confirmed.push(user.into());
+
+        // Remove user from any other lists so that they don't end up in multiple.
+        if !*ALLOW_DUPLICATE_JOIN {
+            self.leave(user).ok();
+        }
+
+        match kind {
+            JoinKind::Confirmed => &mut self.confirmed,
+            JoinKind::Alternate => &mut self.alternates,
+            JoinKind::Maybe => &mut self.maybe,
+        }
+        .push(user.into());
+        Ok(())
+    }
+
+    pub fn leave(&mut self, user: &User) -> Result<()> {
+        let count_before = self.confirmed.len() + self.alternates.len() + self.maybe.len();
+        self.confirmed.retain(|u| u.id != user.id);
+        self.alternates.retain(|u| u.id != user.id);
+        self.maybe.retain(|u| u.id != user.id);
+        let count_after = self.confirmed.len() + self.alternates.len() + self.maybe.len();
+
+        if count_before == count_after {
+            return Err(format_err!("User wasn't in the event"));
+        }
         Ok(())
     }
 
@@ -476,6 +537,7 @@ impl EventManager {
                 creator: creator.into(),
                 confirmed: vec![],
                 alternates: vec![],
+                maybe: vec![],
                 embed_messages: Default::default(),
             },
         );
@@ -586,6 +648,7 @@ mod tests {
                     },
                     confirmed: vec![],
                     alternates: vec![],
+                    maybe: vec![],
                     embed_messages: Default::default(),
                 })
                 .await

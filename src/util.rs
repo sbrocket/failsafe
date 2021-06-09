@@ -2,7 +2,10 @@ use anyhow::{format_err, Result};
 use rand::{distributions::Alphanumeric, prelude::*};
 use serde_json::Value;
 use serenity::model::{
-    interactions::{ApplicationCommandInteractionDataOption, Interaction},
+    interactions::{
+        ApplicationCommandInteractionDataOption,
+        ApplicationCommandInteractionDataOptionValue as OptionValue, Interaction,
+    },
     prelude::*,
 };
 use std::{io::ErrorKind, path::PathBuf};
@@ -13,7 +16,9 @@ pub trait InteractionExt {
 }
 
 pub trait OptionsExt {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<&Value>;
+    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>>;
+
+    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>>;
 }
 
 impl InteractionExt for Interaction {
@@ -27,16 +32,30 @@ impl InteractionExt for Interaction {
 }
 
 impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<&Value> {
+    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>> {
         let name = name.as_ref();
-        let option = self
-            .iter()
-            .find(|opt| opt.name == name)
-            .ok_or_else(|| format_err!("No option '{}' in data", name))?;
-        option
-            .value
-            .as_ref()
-            .ok_or_else(|| format_err!("No value for option '{}'", name))
+        let option = if let Some(option) = self.iter().find(|opt| opt.name == name) {
+            option
+        } else {
+            return Ok(None);
+        };
+        option.value.as_ref().map_or_else(
+            || Err(format_err!("No value for option '{}'", name)),
+            |v| Ok(Some(v)),
+        )
+    }
+
+    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>> {
+        let name = name.as_ref();
+        let option = if let Some(option) = self.iter().find(|opt| opt.name == name) {
+            option
+        } else {
+            return Ok(None);
+        };
+        option.resolved.as_ref().map_or_else(
+            || Err(format_err!("No resolved value for option '{}'", name)),
+            |v| Ok(Some(v)),
+        )
     }
 }
 
