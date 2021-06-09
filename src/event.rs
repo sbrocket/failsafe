@@ -12,6 +12,7 @@ use serenity::{
     http::Http,
     model::{id::UserId, prelude::*},
     prelude::TypeMapKey,
+    utils::Color,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -83,6 +84,14 @@ pub struct EventUser {
     pub id: UserId,
     pub name: String,
 }
+
+impl PartialEq for EventUser {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for EventUser {}
 
 impl From<&User> for EventUser {
     fn from(user: &User) -> Self {
@@ -267,8 +276,6 @@ pub struct Event {
     pub group_size: u8,
     pub creator: EventUser,
     pub confirmed: Vec<EventUser>,
-    // TODO: Need to make use of alternates. Distinguish between confirmed alts and unsure? Fill out
-    // partial groups with alts, distinguish them with italics and "(alt)"?
     pub alternates: Vec<EventUser>,
     #[serde(default)]
     pub maybe: Vec<EventUser>,
@@ -277,6 +284,8 @@ pub struct Event {
     // event is updated.
     // TODO: This data probably needs to move out of the Event so that the mappings of messages to
     // events can be more easily modified for posting events to an event channel.
+    // TODO: Could we keep track of a hash of the last embed's data, so we can update on restart if
+    // the embed content has changed (say through a code change)?
     #[serde(with = "serialize_embed_messages")]
     embed_messages: EmbedMessages,
 }
@@ -288,6 +297,7 @@ lazy_static! {
 }
 
 impl Event {
+    // TODO: Add a limit on how many people can join an event.
     pub fn join(&mut self, user: &User, kind: JoinKind) -> Result<()> {
         let list = match kind {
             JoinKind::Confirmed => &mut self.confirmed,
@@ -329,10 +339,31 @@ impl Event {
         self.datetime.format("%-I:%M %p %Z %-m/%-d").to_string()
     }
 
-    fn confirmed_groups(&self) -> impl Iterator<Item = &[EventUser]> {
-        self.confirmed
-            .chunks(self.group_size as usize)
+    fn confirmed_groups(&self) -> Vec<Vec<(&EventUser, bool)>> {
+        let chunk_size = self.group_size as usize;
+        let combined = self
+            .confirmed
+            .iter()
+            .map(|u| (u, false))
+            .chain(self.alternates.iter().map(|u| (u, true)))
+            .collect_vec();
+        combined
+            .chunks(chunk_size)
+            .take_while(|group| group.len() == chunk_size || !group[0].1)
             .pad_using(1, |_| &[])
+            .map(Vec::from)
+            .collect()
+    }
+
+    fn extra_alts(&self) -> impl Iterator<Item = &EventUser> {
+        let total = self.confirmed.len() + self.alternates.len();
+        let partial_group = total % self.group_size as usize;
+        let skip = if self.alternates.len() >= partial_group {
+            self.alternates.len() - partial_group
+        } else {
+            self.alternates.len()
+        };
+        self.alternates.iter().skip(skip)
     }
 
     pub fn as_embed(&self) -> CreateEmbed {
@@ -342,21 +373,48 @@ impl Event {
             .field("Start Time", self.formatted_datetime(), true)
             .field("Event ID", self.id, true)
             .field("Description", self.description.clone(), false)
+            .color(Color::DARK_GOLD)
             .footer(|f| f.text(format!("Creator | {} | Your Time", self.creator.name)))
             .timestamp(&self.datetime.with_timezone(&Utc));
 
-        self.confirmed_groups().enumerate().for_each(|(i, group)| {
-            let names: String = group
-                .iter()
-                .map(|g| g.name.as_str())
-                .pad_using(1, |_| "None")
-                .join(", ");
-            embed.field(
-                format!("Group {} ({}/{})", i + 1, group.len(), self.group_size),
-                names,
-                true,
-            );
-        });
+        self.confirmed_groups()
+            .iter()
+            .enumerate()
+            .for_each(|(i, group)| {
+                let names: String = group
+                    .iter()
+                    .map(|(user, alt)| {
+                        let name = user.name.as_str();
+                        if *alt {
+                            return format!("*{} (alt)*", name);
+                        }
+                        name.to_owned()
+                    })
+                    .pad_using(1, |_| "None".to_owned())
+                    .join(", ");
+
+                embed.field(
+                    format!("Group {} ({}/{})", i + 1, group.len(), self.group_size),
+                    names,
+                    false,
+                );
+            });
+
+        let alt_names = self
+            .extra_alts()
+            .map(|user| user.name.as_str())
+            .pad_using(1, |_| "None")
+            .join(", ");
+        let maybe_names = self
+            .maybe
+            .iter()
+            .map(|user| user.name.as_str())
+            .pad_using(1, |_| "None")
+            .join(", ");
+        embed
+            .field("Extra Alts", alt_names, true)
+            .field("Maybe", maybe_names, true);
+
         embed
     }
 
