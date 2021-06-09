@@ -45,7 +45,10 @@ impl LeafCommand for LfgShow {
                 resp.interaction_response_data(|msg| {
                     match get_event_from_str(event_manager, &event_id) {
                         Ok(e) => {
-                            let ret = msg.add_embed(e.as_embed());
+                            let ret = msg.add_embed(e.as_embed()).components(|c| {
+                                *c = e.event_buttons();
+                                c
+                            });
                             event = Some(e);
                             ret
                         }

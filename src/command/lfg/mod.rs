@@ -1,10 +1,17 @@
 use super::{CommandOption, LeafCommand};
-use crate::event::{Event, EventHandle, EventId, EventManager};
-use anyhow::Result;
+use crate::{
+    event::{Event, EventHandle, EventId, EventManager, JoinKind},
+    util::*,
+};
+use anyhow::{format_err, Result};
 use serenity::{
-    client::Context, model::interactions::InteractionApplicationCommandCallbackDataFlags,
+    client::Context,
+    model::interactions::{
+        Interaction, InteractionApplicationCommandCallbackDataFlags, MessageComponent,
+    },
 };
 use std::str::FromStr;
+use tracing::debug;
 
 mod create;
 mod join;
@@ -55,5 +62,31 @@ async fn edit_event_from_str(
         Err(_) => {
             Ok("That's not a valid event ID, Captain. They look like this: `dsc123`".to_owned())
         }
+    }
+}
+
+pub async fn handle_component_interaction(
+    ctx: &Context,
+    interaction: &Interaction,
+    data: &MessageComponent,
+) -> Result<()> {
+    debug!("handling component interaction, id '{}'", data.custom_id);
+
+    let user = interaction.get_user()?;
+
+    let custom_id = &data.custom_id;
+    let (action, event_id) = custom_id
+        .split_once(":")
+        .ok_or_else(|| format_err!("Received unexpected component custom_id: {}", custom_id))?;
+
+    match action {
+        "join" => join::join(ctx, interaction, event_id, user, None, JoinKind::Confirmed).await,
+        "alt" => join::join(ctx, interaction, event_id, user, None, JoinKind::Alternate).await,
+        "maybe" => join::join(ctx, interaction, event_id, user, None, JoinKind::Maybe).await,
+        "leave" => leave::leave(ctx, interaction, event_id, user).await,
+        _ => Err(format_err!(
+            "Received unexpected component custom_id: {}",
+            custom_id
+        )),
     }
 }

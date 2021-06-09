@@ -169,7 +169,12 @@ impl<T: LfgCreateActivity> LeafCommand for T {
             let content = format!("Your event **{}** has been created, Captain!", event.id);
             interaction
                 .edit_original_interaction_response(&ctx, |resp| {
-                    resp.content(&content).add_embed(event.as_embed())
+                    resp.content(&content)
+                        .add_embed(event.as_embed())
+                        .components(|c| {
+                            *c = event.event_buttons();
+                            c
+                        })
                 })
                 .await
                 .context("Failed to edit response after creating event")?;

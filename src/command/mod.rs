@@ -137,20 +137,24 @@ impl CommandManager {
     ) -> Result<()> {
         debug!("Received interaction: {:?}", interaction);
 
-        // TODO: Parse the options into an easier to consume form.
-        let data = match interaction.data.as_ref() {
-            Some(InteractionData::ApplicationCommand(data)) => data,
+        match interaction.data.as_ref() {
+            Some(InteractionData::ApplicationCommand(data)) => {
+                // TODO: Parse the options into an easier to consume form.
+                let (cmd_name, leaf, options) = self.find_leaf_command(data)?;
+
+                debug!("'{}' handling command interaction", cmd_name);
+                leaf.handle_interaction(ctx, &interaction, options).await
+            }
+            Some(InteractionData::MessageComponent(data)) => {
+                lfg::handle_component_interaction(ctx, &interaction, data).await
+            }
             _ => {
                 return Err(format_err!(
                     "Unexpected interaction type: {:?}",
                     interaction
                 ))
             }
-        };
-        let (cmd_name, leaf, options) = self.find_leaf_command(data)?;
-
-        debug!("'{}' handling interaction", cmd_name);
-        leaf.handle_interaction(ctx, &interaction, options).await
+        }
     }
 
     fn find_leaf_command<'a>(

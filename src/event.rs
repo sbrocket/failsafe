@@ -7,7 +7,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
-    builder::CreateEmbed,
+    builder::{CreateActionRow, CreateButton, CreateComponents, CreateEmbed},
     client::Context,
     http::Http,
     model::{id::UserId, prelude::*},
@@ -358,6 +358,27 @@ impl Event {
             );
         });
         embed
+    }
+
+    pub fn event_buttons(&self) -> CreateComponents {
+        let mut components = CreateComponents::default();
+        let mut row = CreateActionRow::default();
+
+        let buttons = [
+            ("Join", ButtonStyle::Success),
+            ("Leave", ButtonStyle::Danger),
+            ("Alt", ButtonStyle::Primary),
+            ("Maybe", ButtonStyle::Secondary),
+        ];
+        buttons.iter().for_each(|(label, style)| {
+            let mut button = CreateButton::default();
+            let id = format!("{}:{}", label.to_ascii_lowercase(), self.id);
+            button.style(*style).label(label).custom_id(id);
+            row.add_button(button);
+        });
+
+        components.add_action_row(row);
+        components
     }
 
     /// Adds a new message that contains this event's embed and which should be kept up to date as

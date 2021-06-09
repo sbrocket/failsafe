@@ -160,6 +160,10 @@ pub async fn join(
             .direct_message(&ctx, |msg| {
                 msg.content(content)
                     .set_embed(event.as_embed())
+                    .components(|c| {
+                        *c = event.event_buttons();
+                        c
+                    })
             })
             .await
             .context("Error sending added user a DM notification")?;
