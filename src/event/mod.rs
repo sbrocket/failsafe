@@ -79,7 +79,7 @@ impl TryFrom<String> for EventId {
 
 // TODO: We currently persist the last seen username. Need to make sure these stay up to date as we
 // get new user info.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventUser {
     pub id: UserId,
     pub name: String,
@@ -266,7 +266,7 @@ pub mod serialize_embed_messages {
 }
 
 /// A single scheduled event.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: EventId,
     pub activity: Activity,
@@ -520,7 +520,7 @@ impl Event {
 #[derive(Default)]
 struct EventStore {
     path: Option<PathBuf>,
-    events: BTreeMap<EventId, Event>,
+    events: BTreeMap<EventId, Arc<Event>>,
 }
 
 impl EventStore {
@@ -605,21 +605,19 @@ impl EventManager {
     ) -> Result<EventHandle<'_>> {
         let id = self.next_id(activity)?;
         let description = description.into();
-        self.store.events.insert(
+        let event = Event {
             id,
-            Event {
-                id,
-                activity,
-                datetime,
-                description,
-                group_size: activity.default_group_size(),
-                creator: creator.into(),
-                confirmed: vec![],
-                alternates: vec![],
-                maybe: vec![],
-                embed_messages: Default::default(),
-            },
-        );
+            activity,
+            datetime,
+            description,
+            group_size: activity.default_group_size(),
+            creator: creator.into(),
+            confirmed: vec![],
+            alternates: vec![],
+            maybe: vec![],
+            embed_messages: Default::default(),
+        };
+        self.store.events.insert(id, Arc::new(event));
         self.store.save().await?;
 
         let event = self.store.events.get(&id).unwrap();
@@ -637,7 +635,7 @@ impl EventManager {
             &event.id
         );
         let key = event.id;
-        self.store.events.insert(key, event);
+        self.store.events.insert(key, Arc::new(event));
         self.store.save().await?;
         Ok(self.store.events.get(&key).unwrap())
     }
@@ -659,15 +657,19 @@ impl EventManager {
         id: &EventId,
         edit_fn: impl FnOnce(Option<&mut Event>) -> T,
     ) -> Result<T> {
-        // This needs two lookups because edit_fn needs `&mut Event`, which would require passing it
-        // `&mut Option<&mut Event>`, but then it could also modify the Option out from under us
-        // (e.g. with `take()`).
-        let ret = edit_fn(self.store.events.get_mut(&id));
-        if let Some(event) = self.store.events.get(&id) {
-            event.start_updating_embeds(ctx.clone());
-            self.store.save().await?;
-        }
-        Ok(ret)
+        // Clone the current Event value for this id
+        Ok(match self.store.events.get_mut(&id) {
+            Some(event) => {
+                let mut modified = (**event).clone();
+                let ret = edit_fn(Some(&mut modified));
+                *event = Arc::new(modified);
+
+                event.start_updating_embeds(ctx.clone());
+                self.store.save().await?;
+                ret
+            }
+            None => edit_fn(None),
+        })
     }
 
     fn next_id(&mut self, activity: Activity) -> Result<EventId> {
