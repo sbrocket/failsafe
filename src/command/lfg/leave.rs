@@ -63,18 +63,35 @@ pub async fn leave(
         }
     })
     .await;
-    let content = match edit_result {
-        Ok(msg) => msg,
-        Err(err) => {
-            error!("Failed to edit event: {:?}", err);
-            "Sorry Captain, I seem to be having trouble removing you from that event...".to_owned()
-        }
-    };
 
-    interaction
-        .create_interaction_response(&ctx, |resp| {
-            resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-        })
-        .await?;
+    match (edit_result, interaction.kind) {
+        (Err(err), _) => {
+            error!("Failed to edit event: {:?}", err);
+            let content =
+                "Sorry Captain, I seem to be having trouble removing you from that event...";
+            interaction
+                .create_interaction_response(&ctx, |resp| {
+                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
+                })
+                .await?;
+        }
+        (Ok(content), InteractionType::ApplicationCommand) => {
+            interaction
+                .create_interaction_response(&ctx, |resp| {
+                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
+                })
+                .await?;
+        }
+        (Ok(_), InteractionType::MessageComponent) => {
+            // Just ACK component interactions.
+            interaction
+                .create_interaction_response(&ctx, |resp| {
+                    resp.kind(InteractionResponseType::DeferredUpdateMessage)
+                })
+                .await?;
+        }
+        (_, kind) => error!("Unexpected interaction kind {:?}", kind),
+    }
+
     Ok(())
 }

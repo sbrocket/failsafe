@@ -123,22 +123,37 @@ pub async fn join(
         }
     })
     .await;
-    let content = match edit_result {
-        Ok(msg) => msg,
-        Err(err) => {
+
+    match (edit_result, interaction.kind) {
+        (Err(err), _) => {
             error!(
                 "Failed to add {} to event {}: {:?}",
                 target_user, event_id, err
             );
-            "Sorry Captain, I seem to be having trouble adding you to that event...".to_owned()
+            let content = "Sorry Captain, I seem to be having trouble adding you to that event...";
+            interaction
+                .create_interaction_response(&ctx, |resp| {
+                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
+                })
+                .await?;
         }
-    };
-
-    interaction
-        .create_interaction_response(&ctx, |resp| {
-            resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-        })
-        .await?;
+        (Ok(content), InteractionType::ApplicationCommand) => {
+            interaction
+                .create_interaction_response(&ctx, |resp| {
+                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
+                })
+                .await?;
+        }
+        (Ok(_), InteractionType::MessageComponent) => {
+            // Just ACK component interactions.
+            interaction
+                .create_interaction_response(&ctx, |resp| {
+                    resp.kind(InteractionResponseType::DeferredUpdateMessage)
+                })
+                .await?;
+        }
+        (_, kind) => error!("Unexpected interaction kind {:?}", kind),
+    }
 
     // If the command's issuer was adding someone else to an event, notify the added user over DM.
     if command_user != target_user {
