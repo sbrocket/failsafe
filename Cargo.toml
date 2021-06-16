@@ -27,6 +27,6 @@ static_assertions = "1.1"
 default-features = false
 features = ["builder", "cache", "client", "collector", "gateway", "http", "model", "utils", "rustls_backend", "unstable_discord_api"]
 # Temporarily build from own fork with not-yet-merged PRs applied
-#version = "0.10.7"
+#version = "0.10.8"
 git = "https://github.com/sbrocket/serenity.git"
-rev = "f54afb6ec1d6f228ab2fec0da3fd8dec1c90883a"
+rev = "87b9f04008a322181eae64d7620f57f5244b9c80"
