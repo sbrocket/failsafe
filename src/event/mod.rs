@@ -18,7 +18,7 @@ use serenity::{
 use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
-    iter::{self, successors},
+    iter::successors,
     path::PathBuf,
     str::FromStr,
     sync::Arc,
@@ -617,27 +617,17 @@ impl std::ops::Deref for EventHandle<'_> {
 }
 
 /// Manages a single server's worth of events.
+#[cfg_attr(test, derive(Default))]
 pub struct EventManager {
     store: EventStore,
     next_id: HashMap<Activity, u8>,
-    embed_manager: EmbedManager,
-}
-
-impl Default for EventManager {
-    fn default() -> Self {
-        let http = Arc::new(Default::default());
-        EventManager {
-            store: Default::default(),
-            next_id: Default::default(),
-            embed_manager: EmbedManager::new(http, iter::empty()),
-        }
-    }
+    embed_manager: Option<EmbedManager>,
 }
 
 impl EventManager {
     pub async fn new(store_path: impl Into<PathBuf>, http: Arc<CacheAndHttp>) -> Result<Self> {
         let store = EventStore::new(store_path).await?;
-        let embed_manager = EmbedManager::new(http, store.events.values());
+        let embed_manager = Some(EmbedManager::new(http, store.events.values()));
 
         Ok(EventManager {
             store,
@@ -670,7 +660,9 @@ impl EventManager {
         });
         self.store.events.insert(id, event.clone());
         self.store.save().await?;
-        self.embed_manager.event_added(event).await;
+        if let Some(mgr) = &mut self.embed_manager {
+            mgr.event_added(event).await;
+        }
 
         let event = self.store.events.get(&id).unwrap();
         Ok(EventHandle {
@@ -680,7 +672,7 @@ impl EventManager {
     }
 
     #[cfg(test)]
-    async fn add_event(&mut self, event: Event) -> Result<&Event> {
+    async fn add_test_event(&mut self, event: Event) -> Result<&Event> {
         anyhow::ensure!(
             !self.store.events.contains_key(&event.id),
             "Event already exists with ID {}",
@@ -691,7 +683,9 @@ impl EventManager {
         let event = Arc::new(event);
         self.store.events.insert(key, event.clone());
         self.store.save().await?;
-        self.embed_manager.event_added(event).await;
+        if let Some(mgr) = &mut self.embed_manager {
+            mgr.event_added(event).await;
+        }
         Ok(self.store.events.get(&key).unwrap())
     }
 
@@ -722,7 +716,9 @@ impl EventManager {
                 let event = event.clone();
                 event.start_updating_embeds(ctx.clone());
                 self.store.save().await?;
-                self.embed_manager.event_edited(event).await;
+                if let Some(mgr) = &mut self.embed_manager {
+                    mgr.event_edited(event).await;
+                }
                 ret
             }
             None => edit_fn(None),
@@ -774,7 +770,7 @@ mod tests {
         let user = User::default();
         for index in indexes {
             manager
-                .add_event(Event {
+                .add_test_event(Event {
                     id: event_id(activity, index),
                     activity,
                     datetime: Utc::now().with_timezone(&Tz::PST8PDT),
@@ -803,8 +799,8 @@ mod tests {
         assert_eq!(event_id(GOS, 128).to_string(), "gos128");
     }
 
-    #[test]
-    fn test_next_id_advances() {
+    #[tokio::test]
+    async fn test_next_id_advances() {
         let mut manager = EventManager::default();
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 1));
         assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 2));
