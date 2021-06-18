@@ -655,14 +655,15 @@ impl EventManager {
     ) -> Result<EventHandle<'_>> {
         let id = self.next_id(activity)?;
         let description = description.into();
+        let creator: EventUser = creator.into();
         let event = Arc::new(Event {
             id,
             activity,
             datetime,
             description,
             group_size: activity.default_group_size(),
-            creator: creator.into(),
-            confirmed: vec![],
+            creator: creator.clone(),
+            confirmed: vec![creator],
             alternates: vec![],
             maybe: vec![],
             embed_messages: Default::default(),
