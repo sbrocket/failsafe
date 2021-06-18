@@ -72,11 +72,6 @@ async fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to start the logger");
 
-    let event_store = std::env::var("EVENT_MANAGER_STORE").expect("Missing $EVENT_MANAGER_STORE");
-    let event_manager = EventManager::new(event_store)
-        .await
-        .expect("Failed to create EventManager");
-
     let token = std::env::var("DISCORD_BOT_TOKEN").expect("Missing $DISCORD_BOT_TOKEN");
     let app_id = std::env::var("DISCORD_APP_ID")
         .expect("Missing DISCORD_APP_ID")
@@ -86,9 +81,18 @@ async fn main() {
     let mut client = Client::builder(&token)
         .application_id(app_id)
         .event_handler(Handler::default())
-        .type_map_insert::<EventManager>(event_manager)
         .await
         .expect("Error creating client");
+
+    let event_store = std::env::var("EVENT_MANAGER_STORE").expect("Missing $EVENT_MANAGER_STORE");
+    let event_manager = EventManager::new(event_store, client.cache_and_http.clone())
+        .await
+        .expect("Failed to create EventManager");
+
+    {
+        let mut typemap = client.data.write().await;
+        typemap.insert::<EventManager>(event_manager);
+    }
 
     client.start().await.expect("Client error");
 }

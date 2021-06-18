@@ -13,11 +13,12 @@ use serenity::{
     model::{id::UserId, prelude::*},
     prelude::TypeMapKey,
     utils::Color,
+    CacheAndHttp,
 };
 use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
-    iter::successors,
+    iter::{self, successors},
     path::PathBuf,
     str::FromStr,
     sync::Arc,
@@ -25,8 +26,12 @@ use std::{
 use tokio::{fs, io::AsyncWriteExt, sync::RwLock};
 use tracing::{debug, error, info, warn};
 
+mod embed;
+
+use embed::EmbedManager;
+
 /// Unique identifier for an Event.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
 pub struct EventId {
     pub activity: Activity,
@@ -282,12 +287,42 @@ pub struct Event {
 
     // Messages that this event's embed has been added to, and which need to be updated when the
     // event is updated.
-    // TODO: This data probably needs to move out of the Event so that the mappings of messages to
-    // events can be more easily modified for posting events to an event channel.
+    // TODO: Move this to EmbedManager so that embeds are all tracked in one place.
     // TODO: Could we keep track of a hash of the last embed's data, so we can update on restart if
     // the embed content has changed (say through a code change)?
     #[serde(with = "serialize_embed_messages")]
     embed_messages: EmbedMessages,
+}
+
+// TODO: Switch to deriving this once embed_messages is moved out
+impl PartialEq for Event {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.activity == other.activity
+            && self.datetime == other.datetime
+            && self.description == other.description
+            && self.group_size == other.group_size
+            && self.creator == other.creator
+            && self.confirmed == other.confirmed
+            && self.alternates == other.alternates
+            && self.maybe == other.maybe
+    }
+}
+
+impl Eq for Event {}
+
+impl PartialOrd for Event {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Event {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.datetime
+            .cmp(&other.datetime)
+            .then_with(|| self.id.cmp(&other.id))
+    }
 }
 
 // This is a debugging feature, to allow testing the bot with a small number of users.
@@ -582,17 +617,32 @@ impl std::ops::Deref for EventHandle<'_> {
 }
 
 /// Manages a single server's worth of events.
-#[cfg_attr(test, derive(Default))]
 pub struct EventManager {
     store: EventStore,
     next_id: HashMap<Activity, u8>,
+    embed_manager: EmbedManager,
+}
+
+impl Default for EventManager {
+    fn default() -> Self {
+        let http = Arc::new(Default::default());
+        EventManager {
+            store: Default::default(),
+            next_id: Default::default(),
+            embed_manager: EmbedManager::new(http, iter::empty()),
+        }
+    }
 }
 
 impl EventManager {
-    pub async fn new(store_path: impl Into<PathBuf>) -> Result<Self> {
+    pub async fn new(store_path: impl Into<PathBuf>, http: Arc<CacheAndHttp>) -> Result<Self> {
+        let store = EventStore::new(store_path).await?;
+        let embed_manager = EmbedManager::new(http, store.events.values());
+
         Ok(EventManager {
-            store: EventStore::new(store_path).await?,
+            store,
             next_id: Default::default(),
+            embed_manager,
         })
     }
 
@@ -605,7 +655,7 @@ impl EventManager {
     ) -> Result<EventHandle<'_>> {
         let id = self.next_id(activity)?;
         let description = description.into();
-        let event = Event {
+        let event = Arc::new(Event {
             id,
             activity,
             datetime,
@@ -616,9 +666,10 @@ impl EventManager {
             alternates: vec![],
             maybe: vec![],
             embed_messages: Default::default(),
-        };
-        self.store.events.insert(id, Arc::new(event));
+        });
+        self.store.events.insert(id, event.clone());
         self.store.save().await?;
+        self.embed_manager.event_added(event).await;
 
         let event = self.store.events.get(&id).unwrap();
         Ok(EventHandle {
@@ -634,9 +685,12 @@ impl EventManager {
             "Event already exists with ID {}",
             &event.id
         );
+
         let key = event.id;
-        self.store.events.insert(key, Arc::new(event));
+        let event = Arc::new(event);
+        self.store.events.insert(key, event.clone());
         self.store.save().await?;
+        self.embed_manager.event_added(event).await;
         Ok(self.store.events.get(&key).unwrap())
     }
 
@@ -664,8 +718,10 @@ impl EventManager {
                 let ret = edit_fn(Some(&mut modified));
                 *event = Arc::new(modified);
 
+                let event = event.clone();
                 event.start_updating_embeds(ctx.clone());
                 self.store.save().await?;
+                self.embed_manager.event_edited(event).await;
                 ret
             }
             None => edit_fn(None),
