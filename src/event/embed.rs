@@ -14,6 +14,124 @@ use std::{
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, warn};
 
+// TODO: Replace this hardcoded event channel configuration with commands to configure this.
+fn test_event_channels<'a, I>(initial_events: I) -> Vec<EventChannel>
+where
+    I: Iterator<Item = &'a Arc<Event>> + Clone,
+{
+    let mut v = Vec::new();
+    // #raid-lfg
+    v.push(EventChannel::new(
+        ChannelId(853744114377687090),
+        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Raid),
+        initial_events.clone(),
+    ));
+    // #pve-lfg
+    v.push(EventChannel::new(
+        ChannelId(853744129774452766),
+        Box::new(|e: &Event| match e.activity.activity_type() {
+            ActivityType::Dungeon
+            | ActivityType::Gambit
+            | ActivityType::ExoticQuest
+            | ActivityType::Seasonal
+            | ActivityType::Other => true,
+            _ => false,
+        }),
+        initial_events.clone(),
+    ));
+    // #pvp-lfg
+    v.push(EventChannel::new(
+        ChannelId(853744160926597150),
+        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Crucible),
+        initial_events.clone(),
+    ));
+    // #special-lfg
+    v.push(EventChannel::new(
+        ChannelId(853744175908257813),
+        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Custom),
+        initial_events.clone(),
+    ));
+    // #all-lfg
+    v.push(EventChannel::new(
+        ChannelId(853744186545274880),
+        Box::new(|_: &Event| true),
+        initial_events,
+    ));
+    v
+}
+
+// Rather than using an unbounded channel, which makes it impossible to get a signal if we're
+// generating actions faster than they can be processed, this is an arbitrary buffer size and then
+// check when sending if the buffer is currently full so that we can log.
+const EMBED_ACTION_BUFFER_SIZE: usize = 20;
+
+// TODO: Use a MessageCollector to collect messages in the event channels that aren't from the bot
+// and delete them.
+pub struct EmbedManager {
+    /// Configuration data for event channels, i.e. channels that events are automatically posted to
+    /// based on a filter.
+    event_channels: Vec<EventChannel>,
+    action_send: mpsc::Sender<EmbedAction>,
+}
+
+impl EmbedManager {
+    pub fn new<'a, I>(http: Arc<CacheAndHttp>, initial_events: I) -> Self
+    where
+        I: Iterator<Item = &'a Arc<Event>> + Clone,
+    {
+        let event_channels = test_event_channels(initial_events);
+
+        let (send, recv) = mpsc::channel(EMBED_ACTION_BUFFER_SIZE);
+        EmbedUpdater::start_processing_actions(http, recv);
+
+        EmbedManager {
+            event_channels,
+            action_send: send,
+        }
+    }
+
+    pub async fn event_added(&mut self, new: Arc<Event>) {
+        for chan in self.event_channels.iter_mut() {
+            for action in chan.handle_event_change(EventChange::Added(&new)) {
+                send_log_on_backpressure(&self.action_send, action).await;
+            }
+        }
+    }
+
+    pub async fn event_edited(&mut self, new: Arc<Event>) {
+        for chan in self.event_channels.iter_mut() {
+            for action in chan.handle_event_change(EventChange::Edited(&new)) {
+                send_log_on_backpressure(&self.action_send, action).await;
+            }
+        }
+    }
+
+    pub async fn event_deleted(&mut self, event: Arc<Event>) {
+        for chan in self.event_channels.iter_mut() {
+            for action in chan.handle_event_change(EventChange::Deleted(&event)) {
+                send_log_on_backpressure(&self.action_send, action).await;
+            }
+        }
+    }
+}
+
+async fn send_log_on_backpressure<T>(send: &mpsc::Sender<T>, value: T) {
+    match send.try_send(value) {
+        Ok(()) => {}
+        Err(try_send_err) => match try_send_err {
+            TrySendError::Full(value) => {
+                warn!("EmbedUpdater channel full when adding action!");
+                if let Err(_) = send.send(value).await {
+                    panic!("EmbedUpdater channel unexpectedly closed");
+                }
+            }
+            TrySendError::Closed(_) => {
+                panic!("EmbedUpdater channel unexpectedly closed");
+            }
+        },
+    }
+}
+
 struct EventChannel {
     channel: ChannelId,
     filter: Box<dyn FnMut(&Event) -> bool + Send + Sync + 'static>,
@@ -139,124 +257,6 @@ impl EventChannel {
                 idx,
             })
             .chain(last_action)
-    }
-}
-
-// TODO: Replace this hardcoded event channel configuration with commands to configure this.
-fn test_event_channels<'a, I>(initial_events: I) -> Vec<EventChannel>
-where
-    I: Iterator<Item = &'a Arc<Event>> + Clone,
-{
-    let mut v = Vec::new();
-    // #raid-lfg
-    v.push(EventChannel::new(
-        ChannelId(853744114377687090),
-        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Raid),
-        initial_events.clone(),
-    ));
-    // #pve-lfg
-    v.push(EventChannel::new(
-        ChannelId(853744129774452766),
-        Box::new(|e: &Event| match e.activity.activity_type() {
-            ActivityType::Dungeon
-            | ActivityType::Gambit
-            | ActivityType::ExoticQuest
-            | ActivityType::Seasonal
-            | ActivityType::Other => true,
-            _ => false,
-        }),
-        initial_events.clone(),
-    ));
-    // #pvp-lfg
-    v.push(EventChannel::new(
-        ChannelId(853744160926597150),
-        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Crucible),
-        initial_events.clone(),
-    ));
-    // #special-lfg
-    v.push(EventChannel::new(
-        ChannelId(853744175908257813),
-        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Custom),
-        initial_events.clone(),
-    ));
-    // #all-lfg
-    v.push(EventChannel::new(
-        ChannelId(853744186545274880),
-        Box::new(|_: &Event| true),
-        initial_events,
-    ));
-    v
-}
-
-// Rather than using an unbounded channel, which makes it impossible to get a signal if we're
-// generating actions faster than they can be processed, this is an arbitrary buffer size and then
-// check when sending if the buffer is currently full so that we can log.
-const EMBED_ACTION_BUFFER_SIZE: usize = 20;
-
-// TODO: Use a MessageCollector to collect messages in the event channels that aren't from the bot
-// and delete them.
-pub struct EmbedManager {
-    /// Configuration data for event channels, i.e. channels that events are automatically posted to
-    /// based on a filter.
-    event_channels: Vec<EventChannel>,
-    action_send: mpsc::Sender<EmbedAction>,
-}
-
-impl EmbedManager {
-    pub fn new<'a, I>(http: Arc<CacheAndHttp>, initial_events: I) -> Self
-    where
-        I: Iterator<Item = &'a Arc<Event>> + Clone,
-    {
-        let event_channels = test_event_channels(initial_events);
-
-        let (send, recv) = mpsc::channel(EMBED_ACTION_BUFFER_SIZE);
-        EmbedUpdater::start_processing_actions(http, recv);
-
-        EmbedManager {
-            event_channels,
-            action_send: send,
-        }
-    }
-
-    pub async fn event_added(&mut self, new: Arc<Event>) {
-        for chan in self.event_channels.iter_mut() {
-            for action in chan.handle_event_change(EventChange::Added(&new)) {
-                send_log_on_backpressure(&self.action_send, action).await;
-            }
-        }
-    }
-
-    pub async fn event_edited(&mut self, new: Arc<Event>) {
-        for chan in self.event_channels.iter_mut() {
-            for action in chan.handle_event_change(EventChange::Edited(&new)) {
-                send_log_on_backpressure(&self.action_send, action).await;
-            }
-        }
-    }
-
-    pub async fn event_deleted(&mut self, event: Arc<Event>) {
-        for chan in self.event_channels.iter_mut() {
-            for action in chan.handle_event_change(EventChange::Deleted(&event)) {
-                send_log_on_backpressure(&self.action_send, action).await;
-            }
-        }
-    }
-}
-
-async fn send_log_on_backpressure<T>(send: &mpsc::Sender<T>, value: T) {
-    match send.try_send(value) {
-        Ok(()) => {}
-        Err(try_send_err) => match try_send_err {
-            TrySendError::Full(value) => {
-                warn!("EmbedUpdater channel full when adding action!");
-                if let Err(_) = send.send(value).await {
-                    panic!("EmbedUpdater channel unexpectedly closed");
-                }
-            }
-            TrySendError::Closed(_) => {
-                panic!("EmbedUpdater channel unexpectedly closed");
-            }
-        },
     }
 }
 
