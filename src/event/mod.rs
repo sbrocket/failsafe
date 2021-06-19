@@ -821,7 +821,6 @@ impl TypeMapKey for EventManager {
 
 #[cfg(test)]
 mod tests {
-    // No clue why * doesn't pull in 'Event'
     use super::{Event, *};
     use std::iter;
 

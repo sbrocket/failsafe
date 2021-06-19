@@ -260,7 +260,7 @@ impl EventChannel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum EmbedAction {
     // Create a new message at the end of this channel for the given event.
     New {
@@ -398,5 +398,155 @@ impl EmbedUpdater {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::activity::{Activity, ActivityType};
+    use crate::event::{Event, EventId, EventUser};
+    use chrono::{Duration, Utc};
+    use chrono_tz::Tz;
+    use serenity::model::prelude::*;
+    use std::iter;
+
+    fn test_event(activity: Activity, idx: u8, hours_away: i64) -> Arc<Event> {
+        let user = User::default();
+        Arc::new(Event {
+            id: EventId { activity, idx },
+            activity,
+            datetime: Utc::now().with_timezone(&Tz::PST8PDT) + Duration::hours(hours_away),
+            description: "".to_string(),
+            group_size: 1,
+            creator: EventUser {
+                id: user.id,
+                name: user.name.clone(),
+            },
+            confirmed: vec![],
+            alternates: vec![],
+            maybe: vec![],
+            embed_messages: Default::default(),
+        })
+    }
+
+    fn new_action(event: Arc<Event>, chan_id: ChannelId) -> EmbedAction {
+        EmbedAction::New {
+            event,
+            chan: chan_id,
+        }
+    }
+
+    fn update_action(event: Arc<Event>, chan_id: ChannelId, idx: usize) -> EmbedAction {
+        EmbedAction::Update {
+            event,
+            chan: chan_id,
+            idx,
+        }
+    }
+
+    fn delete_action(chan_id: ChannelId, idx: usize) -> EmbedAction {
+        EmbedAction::Delete { chan: chan_id, idx }
+    }
+
+    #[test]
+    fn add_update_delete_matching_event() {
+        let chan_id = ChannelId::from(1234);
+        let mut chan = EventChannel::new(
+            chan_id,
+            Box::new(|event: &Event| event.activity.activity_type() == ActivityType::Raid),
+            iter::empty(),
+        );
+
+        let event = test_event(Activity::DeepStoneCrypt, 1, 0);
+        assert_eq!(
+            chan.handle_event_change(EventChange::Added(&event))
+                .collect::<Vec<_>>(),
+            vec![new_action(event.clone(), chan_id)]
+        );
+
+        let mut event = event.clone();
+        Arc::make_mut(&mut event).group_size = 4;
+        assert_eq!(
+            chan.handle_event_change(EventChange::Edited(&event))
+                .collect::<Vec<_>>(),
+            vec![update_action(event.clone(), chan_id, 0)]
+        );
+
+        assert_eq!(
+            chan.handle_event_change(EventChange::Deleted(&event))
+                .collect::<Vec<_>>(),
+            vec![delete_action(chan_id, 0)]
+        );
+    }
+
+    #[test]
+    fn add_edit_delete_earlier_events_test() {
+        let chan_id = ChannelId::from(1234);
+        let mut chan = EventChannel::new(
+            chan_id,
+            Box::new(|event: &Event| event.activity.activity_type() == ActivityType::Raid),
+            iter::empty(),
+        );
+
+        let event1 = test_event(Activity::DeepStoneCrypt, 10, 0);
+        let event2 = test_event(Activity::VaultOfGlass, 20, 1);
+        let event3 = test_event(Activity::LastWish, 30, 2);
+
+        // Add the latest event first.
+        assert_eq!(
+            chan.handle_event_change(EventChange::Added(&event3))
+                .collect::<Vec<_>>(),
+            vec![new_action(event3.clone(), chan_id)]
+        );
+
+        // Add the earliest event.
+        assert_eq!(
+            chan.handle_event_change(EventChange::Added(&event1))
+                .collect::<Vec<_>>(),
+            vec![
+                update_action(event1.clone(), chan_id, 0),
+                new_action(event3.clone(), chan_id),
+            ]
+        );
+
+        // Add the middle event.
+        assert_eq!(
+            chan.handle_event_change(EventChange::Added(&event2))
+                .collect::<Vec<_>>(),
+            vec![
+                update_action(event2.clone(), chan_id, 1),
+                new_action(event3.clone(), chan_id),
+            ]
+        );
+
+        // Update the time of the latest event so that it is now the earliest.
+        let mut event0 = event3.clone();
+        Arc::make_mut(&mut event0).datetime = event3.datetime - Duration::hours(4);
+        assert_eq!(
+            chan.handle_event_change(EventChange::Edited(&event0))
+                .collect::<Vec<_>>(),
+            vec![
+                update_action(event0.clone(), chan_id, 0),
+                update_action(event1.clone(), chan_id, 1),
+                update_action(event2.clone(), chan_id, 2),
+            ]
+        );
+
+        // Delete the middle event.
+        assert_eq!(
+            chan.handle_event_change(EventChange::Deleted(&event1))
+                .collect::<Vec<_>>(),
+            vec![delete_action(chan_id, 1)],
+        );
+
+        // Edit the earliest event so that it no longer matches the filter.
+        let mut event0 = event0.clone();
+        Arc::make_mut(&mut event0).activity = Activity::Presage;
+        assert_eq!(
+            chan.handle_event_change(EventChange::Edited(&event0))
+                .collect::<Vec<_>>(),
+            vec![delete_action(chan_id, 0)],
+        );
     }
 }
