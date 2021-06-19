@@ -341,7 +341,7 @@ impl EmbedUpdater {
             None => {
                 // Haven't processed an action on this channel yet; fetch existing messages.
                 let cache = &self.http.cache;
-                let messages = chan
+                let mut messages: Vec<_> = chan
                     .messages_iter(&self.http.http)
                     .try_filter_map(|msg| async {
                         Ok(if msg.is_own(cache).await {
@@ -353,6 +353,8 @@ impl EmbedUpdater {
                     .try_collect()
                     .await
                     .context("Failed to get channel messages")?;
+                // The returned messages have the newest first, so reverse the order.
+                messages.reverse();
                 self.channel_messages.insert(chan, messages);
                 self.channel_messages.get_mut(&chan).unwrap()
             }
