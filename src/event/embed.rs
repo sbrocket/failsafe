@@ -234,9 +234,9 @@ impl EmbedManager {
         }
     }
 
-    pub async fn event_deleted(&mut self, new: Arc<Event>) {
+    pub async fn event_deleted(&mut self, event: Arc<Event>) {
         for chan in self.event_channels.iter_mut() {
-            for action in chan.handle_event_change(EventChange::Deleted(&new)) {
+            for action in chan.handle_event_change(EventChange::Deleted(&event)) {
                 send_log_on_backpressure(&self.action_send, action).await;
             }
         }

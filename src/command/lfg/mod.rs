@@ -14,6 +14,7 @@ use std::str::FromStr;
 use tracing::debug;
 
 mod create;
+mod delete;
 mod join;
 mod leave;
 mod show;
@@ -22,7 +23,13 @@ const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
     InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
 
 define_command!(Lfg, "lfg", "Create and interact with scheduled events",
-                Subcommands: [join::LfgJoin, leave::LfgLeave, show::LfgShow, create::LfgCreate]);
+Subcommands: [
+    create::LfgCreate,
+    delete::LfgDelete,
+    join::LfgJoin,
+    leave::LfgLeave,
+    show::LfgShow,
+]);
 
 /// Returns the matching Event or else an error message to use in the interaction reponse.
 fn get_event_from_str(

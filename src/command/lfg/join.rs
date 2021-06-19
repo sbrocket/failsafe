@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use super::{edit_event_from_str, get_event_from_str, CommandOption, LeafCommand, EPHEMERAL_FLAG};
 use crate::{
     command::OptionType,
@@ -20,6 +18,7 @@ use serenity::{
     },
     utils::MessageBuilder,
 };
+use std::str::FromStr;
 use tracing::error;
 
 define_command!(LfgJoin, "join", "Join an existing event", Leaf);

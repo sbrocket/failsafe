@@ -550,6 +550,54 @@ impl Event {
             }
         });
     }
+
+    fn start_deleting_embeds(&self, ctx: Context) {
+        let messages = self.embed_messages.clone();
+        let update_fut = async move {
+            let mut messages = messages.write().await;
+            future::join_all(messages.drain(..).filter(|m| !m.expired()).map(|msg| {
+                let ctx = &ctx;
+                async move {
+                    match msg {
+                        EventEmbedMessage::Normal(chan_id, msg_id) => {
+                            chan_id.delete_message(ctx, msg_id).await
+                        }
+                        EventEmbedMessage::EphemeralResponse(interaction, ..) => interaction
+                            .edit_original_interaction_response(ctx, |resp| resp.set_embeds(vec![]))
+                            .await
+                            .and(Ok(())),
+                    }
+                    .context("Failed to delete message")
+                }
+            }))
+            .await
+        };
+
+        let event_id = self.id;
+        tokio::spawn(async move {
+            let results = update_fut.await;
+            let (successes, failures): (Vec<_>, Vec<_>) =
+                results.into_iter().partition(Result::is_ok);
+            let count = successes.len() + failures.len();
+            if failures.is_empty() {
+                info!("Successfully delete embed messages for event {}", event_id);
+            } else if successes.is_empty() {
+                error!(
+                    "All ({}) embed messages failed to delete for event {}",
+                    count, event_id
+                );
+                failures.into_iter().for_each(|f| error!("{:?}", f));
+            } else {
+                error!(
+                    "Some ({}/{}) embed messages failed to delete for event {}",
+                    failures.len(),
+                    count,
+                    event_id
+                );
+                failures.into_iter().for_each(|f| error!("{:?}", f));
+            }
+        });
+    }
 }
 
 #[derive(Default)]
@@ -723,6 +771,21 @@ impl EventManager {
             }
             None => edit_fn(None),
         })
+    }
+
+    pub async fn delete_event(&mut self, ctx: &Context, id: &EventId) -> Result<()> {
+        let event = self
+            .store
+            .events
+            .remove(&id)
+            .ok_or(format_err!("Event {} does not exist", id))?;
+
+        event.start_deleting_embeds(ctx.clone());
+        self.store.save().await?;
+        if let Some(mgr) = &mut self.embed_manager {
+            mgr.event_deleted(event).await;
+        }
+        Ok(())
     }
 
     fn next_id(&mut self, activity: Activity) -> Result<EventId> {
