@@ -142,6 +142,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "command_attr"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a6c3666f685cb1efc0628b8c984dbad9c372d080450736c7732089c385ed81d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,6 +240,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "chrono-tz",
+ "command_attr",
  "dotenv",
  "dtparse",
  "enum-iterator",

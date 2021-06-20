@@ -1,9 +1,8 @@
-use super::{edit_event_from_str, CommandOption, LeafCommand, EPHEMERAL_FLAG};
-use crate::{command::OptionType, event::EventManager, util::*};
+use super::{edit_event_from_str, opts, EPHEMERAL_FLAG};
+use crate::{event::EventManager, util::*};
 use anyhow::{format_err, Result};
 use serde_json::Value;
 use serenity::{
-    async_trait,
     client::Context,
     model::{
         interactions::{ApplicationCommandInteractionDataOption, Interaction},
@@ -12,34 +11,28 @@ use serenity::{
 };
 use tracing::error;
 
-define_command!(LfgLeave, "leave", "Leave an existing event", Leaf);
+define_leaf_command!(
+    LfgLeave,
+    "leave",
+    "Leave an existing event",
+    lfg_leave,
+    options: [opts::EventId],
+);
 
-#[async_trait]
-impl LeafCommand for LfgLeave {
-    fn options(&self) -> Vec<CommandOption> {
-        vec![CommandOption {
-            name: "event_id",
-            description: "Event ID",
-            required: true,
-            option_type: OptionType::String(vec![]),
-        }]
-    }
+#[command_attr::hook]
+async fn lfg_leave(
+    ctx: &Context,
+    interaction: &Interaction,
+    options: &Vec<ApplicationCommandInteractionDataOption>,
+) -> Result<()> {
+    let user = interaction.get_user()?;
+    let event_id = match options.get_value("event_id")? {
+        Some(Value::String(v)) => Ok(v),
+        Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+        None => Err(format_err!("Missing required event_id value")),
+    }?;
 
-    async fn handle_interaction(
-        &self,
-        ctx: &Context,
-        interaction: &Interaction,
-        options: &Vec<ApplicationCommandInteractionDataOption>,
-    ) -> Result<()> {
-        let user = interaction.get_user()?;
-        let event_id = match options.get_value("event_id")? {
-            Some(Value::String(v)) => Ok(v),
-            Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
-            None => Err(format_err!("Missing required event_id value")),
-        }?;
-
-        leave(ctx, interaction, event_id, user).await
-    }
+    leave(ctx, interaction, event_id, user).await
 }
 
 pub async fn leave(

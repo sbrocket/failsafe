@@ -1,4 +1,3 @@
-use super::{CommandOption, LeafCommand};
 use crate::{
     event::{Event, EventHandle, EventId, EventManager, JoinKind},
     util::*,
@@ -13,6 +12,8 @@ use serenity::{
 use std::str::FromStr;
 use tracing::debug;
 
+mod opts;
+
 mod create;
 mod delete;
 mod join;
@@ -24,14 +25,18 @@ const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
 
 // TODO: Reorder these so that join & leave appear first when typing `/lfg` in Discord. Need to
 // delete and recreate.
-define_command!(Lfg, "lfg", "Create and interact with scheduled events",
-Subcommands: [
-    create::LfgCreate,
-    delete::LfgDelete,
-    join::LfgJoin,
-    leave::LfgLeave,
-    show::LfgShow,
-]);
+define_command_group!(
+    Lfg,
+    "lfg",
+    "Create and interact with scheduled events",
+    subcommands: [
+        create::LfgCreate,
+        delete::LfgDelete,
+        join::LfgJoin,
+        leave::LfgLeave,
+        show::LfgShow,
+    ]
+);
 
 /// Returns the matching Event or else an error message to use in the interaction reponse.
 fn get_event_from_str(

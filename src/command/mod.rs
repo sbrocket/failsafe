@@ -1,7 +1,7 @@
 use anyhow::{ensure, format_err, Result};
+use futures::future::BoxFuture;
 use lazy_static::lazy_static;
 use serenity::{
-    async_trait,
     builder::{CreateApplicationCommand, CreateApplicationCommandOption},
     client::Context,
     model::{
@@ -20,41 +20,36 @@ mod macros;
 
 mod lfg;
 
-/// Generic trait that all command types implement.
-pub trait Command: Send + Sync + std::fmt::Debug {
-    fn name(&self) -> &'static str;
-
-    fn description(&self) -> &'static str;
-
-    fn command_type(&self) -> CommandType;
+/// Definition of a command.
+pub struct Command {
+    name: &'static str,
+    description: &'static str,
+    command_type: CommandType,
 }
-
-pub type SubcommandsMap = Vec<(&'static str, Box<dyn Command>)>;
 
 /// Type of the command, which differs depending on the number of nested layers.
-pub enum CommandType<'a> {
+pub enum CommandType {
     /// A leaf command that handles user interactions.
-    Leaf(&'a dyn LeafCommand),
-    /// A top level command that contains subcommands and/or subcommand groups. Note that
-    /// subcommands can only be nested twice.
-    Subcommands(&'a SubcommandsMap),
+    Leaf(&'static LeafCommand),
+    /// A top level command that contains subcommands and/or subcommand groups, or a subcommand
+    /// group that contains subcommands. In other words, only two levels of nesting are supported.
+    Group(&'static [&'static Command]),
 }
 
-/// Trait for leaf commands, which have user-facing options and handle user interactions.
-#[async_trait]
-pub trait LeafCommand: Command {
-    /// Commands can have [0,25] options.
-    fn options(&self) -> Vec<CommandOption>;
+type CommandHandler = for<'fut> fn(
+    &'fut Context,
+    &'fut Interaction,
+    &'fut Vec<ApplicationCommandInteractionDataOption>,
+) -> BoxFuture<'fut, Result<()>>;
 
-    async fn handle_interaction(
-        &self,
-        ctx: &Context,
-        interaction: &Interaction,
-        options: &Vec<ApplicationCommandInteractionDataOption>,
-    ) -> Result<()>;
+/// Definition of a leaf command, which has user-facing options and handles user interactions.
+pub struct LeafCommand {
+    options: &'static [&'static CommandOption],
+    handler: CommandHandler,
 }
 
 /// Definition of a single command option.
+#[derive(Debug, Clone)]
 pub struct CommandOption {
     name: &'static str,
     description: &'static str,
@@ -62,13 +57,14 @@ pub struct CommandOption {
     option_type: OptionType,
 }
 
-/// The type for a CommandOption, including any choices if the type supports them.
+/// The value type for a CommandOption, including any choices if the type supports them.
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum OptionType {
     /// String options can have [0,25] choices.
-    String(Vec<(String, String)>),
+    String(&'static [(&'static str, &'static str)]),
     /// Integer options can have [0,25] choices.
-    Integer(Vec<(String, i32)>),
+    Integer(&'static [(&'static str, i32)]),
     Boolean,
     User,
     Channel,
@@ -90,13 +86,9 @@ impl OptionType {
     }
 }
 
+// List of all known top-level commands; add new commands here as they're created.
 lazy_static! {
-    /// List of all known commands; add new commands here as they're created.
-    static ref COMMANDS: Vec<(&'static str, Box<dyn Command>)> = {
-        vec![
-            Box::new(lfg::Lfg::new()) as Box<dyn Command>,
-        ].into_iter().map(|c| (c.name(), c)).collect()
-    };
+    static ref COMMANDS: Vec<&'static Command> = vec![&*lfg::Lfg::COMMAND];
 }
 
 /// Manages the bot's slash commands, handling creating the commands on startup and dispatching
@@ -115,10 +107,7 @@ impl CommandManager {
         // limit.
         let commands = guild
             .set_application_commands(&ctx, |commands| {
-                let app_commands = COMMANDS
-                    .iter()
-                    .map(|(_, command)| command.build())
-                    .collect();
+                let app_commands = COMMANDS.iter().map(|command| command.build()).collect();
                 commands.set_application_commands(app_commands)
             })
             .await?;
@@ -141,7 +130,7 @@ impl CommandManager {
                 let (cmd_name, leaf, options) = self.find_leaf_command(data)?;
 
                 debug!("'{}' handling command interaction", cmd_name);
-                leaf.handle_interaction(ctx, &interaction, options).await
+                (leaf.handler)(ctx, &interaction, options).await
             }
             Some(InteractionData::MessageComponent(data)) => {
                 lfg::handle_component_interaction(ctx, &interaction, data).await
@@ -160,20 +149,19 @@ impl CommandManager {
         data: &'a ApplicationCommandInteractionData,
     ) -> Result<(
         String,
-        &dyn LeafCommand,
+        &'a LeafCommand,
         &'a Vec<ApplicationCommandInteractionDataOption>,
     )> {
         let name1 = data.name.as_str();
         let first = &COMMANDS
             .iter()
-            .find(|(name, _)| *name == name1)
-            .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?
-            .1;
+            .find(|cmd| cmd.name == name1)
+            .ok_or_else(|| format_err!("Unknown command '{}'", &data.name))?;
 
         // TODO: This works but pretty clearly could be shortened with looping or recursion.
-        Ok(match first.command_type() {
+        Ok(match first.command_type {
             CommandType::Leaf(leaf) => (name1.to_string(), leaf, &data.options),
-            CommandType::Subcommands(subcommands) => {
+            CommandType::Group(subcommands) => {
                 ensure!(
                     data.options.len() == 1,
                     "Expected 1 option to identify subcommand: {:?}",
@@ -183,14 +171,13 @@ impl CommandManager {
                 let name2 = data.options.first().unwrap().name.as_str();
                 let cmd = &subcommands
                     .iter()
-                    .find(|(name, _)| *name == name2)
-                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", name1, name2))?
-                    .1;
+                    .find(|cmd| cmd.name == name2)
+                    .ok_or_else(|| format_err!("Unknown subcommand '{} {}'", name1, name2))?;
 
                 // Check if this is a leaf or if there's a 2nd layer of nesting.
-                match cmd.command_type() {
+                match cmd.command_type {
                     CommandType::Leaf(leaf) => ([name1, name2].join("."), leaf, &sub_data.options),
-                    CommandType::Subcommands(cmds) => {
+                    CommandType::Group(cmds) => {
                         ensure!(
                             sub_data.options.len() == 1,
                             "Expected 1 option to identify subcommand: {:?}",
@@ -198,20 +185,16 @@ impl CommandManager {
                         );
                         let group_data = sub_data.options.first().unwrap();
                         let name3 = group_data.name.as_str();
-                        let cmd = &cmds
-                            .iter()
-                            .find(|(name, _)| *name == name3)
-                            .ok_or_else(|| {
-                                format_err!(
-                                    "Unknown subcommand in group '{} {} {}'",
-                                    name1,
-                                    name2,
-                                    name3
-                                )
-                            })?
-                            .1;
+                        let cmd = &cmds.iter().find(|cmd| cmd.name == name3).ok_or_else(|| {
+                            format_err!(
+                                "Unknown subcommand in group '{} {} {}'",
+                                name1,
+                                name2,
+                                name3
+                            )
+                        })?;
 
-                        if let CommandType::Leaf(leaf) = cmd.command_type() {
+                        if let CommandType::Leaf(leaf) = cmd.command_type {
                             ([name1, name2, name3].join("."), leaf, &group_data.options)
                         } else {
                             // Unreachable because this should have been caught during command
@@ -225,25 +208,37 @@ impl CommandManager {
     }
 }
 
-impl dyn Command + '_ {
+impl Command {
     fn build(&self) -> CreateApplicationCommand {
         let mut command = CreateApplicationCommand::default();
-        let options = match self.command_type() {
+        let options = match self.command_type {
             CommandType::Leaf(leaf) => leaf.build_options(),
-            CommandType::Subcommands(cmds) => {
+            CommandType::Group(cmds) => {
                 assert!(cmds.len() <= 25);
                 cmds.iter()
-                    .map(|(_, cmd)| match cmd.command_type() {
-                        CommandType::Leaf(leaf) => leaf.build_as_subcommand(),
-                        CommandType::Subcommands(_) => cmd.build_subcommand_group(),
+                    .map(|cmd| match cmd.command_type {
+                        CommandType::Leaf(leaf) => cmd.build_as_subcommand(leaf),
+                        CommandType::Group(_) => cmd.build_subcommand_group(),
                     })
                     .collect()
             }
         };
         command
-            .name(self.name())
-            .description(self.description())
+            .name(self.name)
+            .description(self.description)
             .set_options(options);
+        command
+    }
+
+    fn build_as_subcommand(&self, leaf: &LeafCommand) -> CreateApplicationCommandOption {
+        let mut command = CreateApplicationCommandOption::default();
+        command
+            .kind(ApplicationCommandOptionType::SubCommand)
+            .name(self.name)
+            .description(self.description);
+        leaf.build_options().into_iter().for_each(|opt| {
+            let _ = command.add_sub_option(opt);
+        });
         command
     }
 
@@ -251,13 +246,13 @@ impl dyn Command + '_ {
         let mut command = CreateApplicationCommandOption::default();
         command
             .kind(ApplicationCommandOptionType::SubCommandGroup)
-            .name(self.name())
-            .description(self.description());
-        if let CommandType::Subcommands(cmds) = self.command_type() {
+            .name(self.name)
+            .description(self.description);
+        if let CommandType::Group(cmds) = self.command_type {
             assert!(cmds.len() <= 25);
-            cmds.iter().for_each(|(_, cmd)| {
-                if let CommandType::Leaf(leaf) = cmd.command_type() {
-                    let _ = command.add_sub_option(leaf.build_as_subcommand());
+            cmds.iter().for_each(|cmd| {
+                if let CommandType::Leaf(leaf) = cmd.command_type {
+                    let _ = command.add_sub_option(cmd.build_as_subcommand(leaf));
                 } else {
                     // Fine to panic since this is operating on static command definitions
                     panic!("Only 2 layers of nesting are allowed");
@@ -270,30 +265,15 @@ impl dyn Command + '_ {
     }
 }
 
-impl dyn LeafCommand + '_ {
-    fn build_as_subcommand(&self) -> CreateApplicationCommandOption {
-        let mut command = CreateApplicationCommandOption::default();
-        command
-            .kind(ApplicationCommandOptionType::SubCommand)
-            .name(self.name())
-            .description(self.description());
-        self.build_options().into_iter().for_each(|opt| {
-            let _ = command.add_sub_option(opt);
-        });
-        command
-    }
-
+impl LeafCommand {
     fn build_options(&self) -> Vec<CreateApplicationCommandOption> {
-        assert!(self.options().len() <= 25);
-        self.options()
-            .into_iter()
-            .map(|option| option.build())
-            .collect()
+        assert!(self.options.len() <= 25);
+        self.options.iter().map(|option| option.build()).collect()
     }
 }
 
 impl CommandOption {
-    fn build(self) -> CreateApplicationCommandOption {
+    fn build(&self) -> CreateApplicationCommandOption {
         let mut option = CreateApplicationCommandOption::default();
         let kind = self.option_type.api_type();
         match self.option_type {
@@ -306,7 +286,7 @@ impl CommandOption {
             OptionType::Integer(choices) => {
                 assert!(choices.len() <= 25);
                 choices.into_iter().for_each(|(name, value)| {
-                    option.add_int_choice(name, value);
+                    option.add_int_choice(name, *value);
                 })
             }
             OptionType::Boolean

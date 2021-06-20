@@ -1,58 +1,71 @@
-macro_rules! define_command {
-    ($ty:ident, $name:literal, $descr:expr, Leaf) => {
-        #[derive(Debug)]
-        pub struct $ty;
+macro_rules! define_command_option {
+    (
+        id: $id:ident,
+        name: $name:literal,
+        description: $descr:literal,
+        required: $required:literal,
+        option_type: $option_type:expr,
+    ) => {
+        #[allow(non_snake_case)]
+        pub mod $id {
+            use super::*;
 
-        impl $ty {
-            pub fn new() -> Self {
-                $ty
-            }
-        }
-
-        impl $crate::command::Command for $ty {
-            fn name(&self) -> &'static str {
-                $name
-            }
-
-            fn description(&self) -> &'static str {
-                $descr
-            }
-
-            fn command_type(&self) -> $crate::command::CommandType {
-                $crate::command::CommandType::Leaf(self as &dyn LeafCommand)
+            lazy_static::lazy_static! {
+                pub static ref OPTION: $crate::command::CommandOption = $crate::command::CommandOption {
+                    name: $name,
+                    description: $descr,
+                    required: $required,
+                    option_type: $option_type,
+                };
             }
         }
     };
-    ($ty:ident, $name:literal, $descr:expr, Subcommands: [$($sub_ty:path),+ $(,)?]) => {
-        #[derive(Debug)]
-        pub struct $ty {
-            subcommands: $crate::command::SubcommandsMap,
-        }
+}
 
-        impl $ty {
-            pub fn new() -> Self {
-                Self {
-                    subcommands: vec![
-                        $(Box::new(<$sub_ty>::new()) as Box<dyn $crate::command::Command>),+
-                    ]
-                    .into_iter()
-                    .map(|c| (c.name(), c))
-                    .collect(),
-                }
+macro_rules! define_leaf_command {
+    ($id:ident, $name:literal, $descr:expr, $handler:ident, options: [$($($opt_path:ident)::+),* $(,)?],) => {
+        #[allow(non_snake_case)]
+        pub mod $id {
+            #[allow(unused)]
+            use super::*;
+
+            lazy_static::lazy_static! {
+                static ref OPTIONS: Vec<&'static $crate::command::CommandOption> = vec![
+                    $(&*$($opt_path)::+ ::OPTION),*
+                ];
+
+                pub static ref LEAF: $crate::command::LeafCommand = $crate::command::LeafCommand {
+                    options: &*OPTIONS,
+                    handler: $handler,
+                };
+
+                pub static ref COMMAND: $crate::command::Command = $crate::command::Command {
+                    name: $name,
+                    description: $descr,
+                    command_type: $crate::command::CommandType::Leaf(&*LEAF),
+                };
             }
         }
+    };
+}
 
-        impl $crate::command::Command for $ty {
-            fn name(&self) -> &'static str {
-                $name
-            }
+macro_rules! define_command_group {
+    ($id:ident, $name:literal, $descr:literal, subcommands: [$($($sub_path:ident)::+),+ $(,)?]) => {
+        #[allow(non_snake_case)]
+        pub mod $id {
+            #[allow(unused)]
+            use super::*;
 
-            fn description(&self) -> &'static str {
-                $descr
-            }
+            lazy_static::lazy_static! {
+                static ref COMMANDS: Vec<&'static $crate::command::Command> = vec![
+                    $(&*$($sub_path)::+ ::COMMAND),*
+                ];
 
-            fn command_type(&self) -> $crate::command::CommandType {
-                $crate::command::CommandType::Subcommands(&self.subcommands)
+                pub static ref COMMAND: $crate::command::Command = $crate::command::Command {
+                    name: $name,
+                    description: $descr,
+                    command_type: $crate::command::CommandType::Group(&*COMMANDS),
+                };
             }
         }
     };

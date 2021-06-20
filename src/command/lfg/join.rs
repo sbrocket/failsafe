@@ -1,4 +1,4 @@
-use super::{edit_event_from_str, get_event_from_str, CommandOption, LeafCommand, EPHEMERAL_FLAG};
+use super::{edit_event_from_str, get_event_from_str, opts, EPHEMERAL_FLAG};
 use crate::{
     command::OptionType,
     event::{EventEmbedMessage, EventManager, JoinKind},
@@ -7,7 +7,6 @@ use crate::{
 use anyhow::{format_err, Context as _, Result};
 use serde_json::Value;
 use serenity::{
-    async_trait,
     client::Context,
     model::{
         interactions::{
@@ -21,73 +20,73 @@ use serenity::{
 use std::str::FromStr;
 use tracing::error;
 
-define_command!(LfgJoin, "join", "Join an existing event", Leaf);
+define_command_option!(
+    id: UserOpt,
+    name: "user",
+    description: "User to add to event",
+    required: false,
+    option_type: OptionType::User,
+);
 
-#[async_trait]
-impl LeafCommand for LfgJoin {
-    fn options(&self) -> Vec<CommandOption> {
-        vec![
-            CommandOption {
-                name: "event_id",
-                description: "Event ID",
-                required: true,
-                option_type: OptionType::String(vec![]),
-            },
-            CommandOption {
-                name: "user",
-                description: "User to add to event",
-                required: false,
-                option_type: OptionType::User,
-            },
-            CommandOption {
-                name: "join_kind",
-                description: "Do you want to join as confirmed, alternate, or maybe?",
-                required: false,
-                option_type: OptionType::String(vec![
-                    ("Confirmed".to_owned(), "confirmed".to_owned()),
-                    ("Confirmed Alt".to_owned(), "alt".to_owned()),
-                    ("Maybe".to_owned(), "maybe".to_owned()),
-                ]),
-            },
-        ]
-    }
+define_command_option!(
+    id: JoinKindOpt,
+    name: "join_kind",
+    description: "Do you want to join as confirmed, alternate, or maybe?",
+    required: false,
+    option_type: OptionType::String(&[
+        ("Confirmed", "confirmed"),
+        ("Confirmed Alt", "alt"),
+        ("Maybe", "maybe"),
+    ]),
+);
 
-    async fn handle_interaction(
-        &self,
-        ctx: &Context,
-        interaction: &Interaction,
-        options: &Vec<ApplicationCommandInteractionDataOption>,
-    ) -> Result<()> {
-        let event_id = match options.get_value("event_id")? {
-            Some(Value::String(v)) => Ok(v),
-            Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
-            None => Err(format_err!("Missing required event_id value")),
-        }?;
+define_leaf_command!(
+    LfgJoin,
+    "join",
+    "Join an existing event",
+    lfg_join,
+    options: [
+        opts::EventId,
+        UserOpt,
+        JoinKindOpt,
+    ],
+);
 
-        let command_user = interaction.get_user()?;
-        let target_user = match options.get_resolved("user")? {
-            None => Ok(command_user),
-            Some(OptionValue::User(user, _)) => Ok(user),
-            Some(v) => Err(format_err!("Unexpected resolved value type: {:?}", v)),
-        }?;
-        let kind = match options.get_value("join_kind")? {
-            None => Ok(JoinKind::Confirmed),
-            Some(Value::String(s)) => JoinKind::from_str(s),
-            Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
-        }?;
+#[command_attr::hook]
+async fn lfg_join(
+    ctx: &Context,
+    interaction: &Interaction,
+    options: &Vec<ApplicationCommandInteractionDataOption>,
+) -> Result<()> {
+    let event_id = match options.get_value("event_id")? {
+        Some(Value::String(v)) => Ok(v),
+        Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+        None => Err(format_err!("Missing required event_id value")),
+    }?;
 
-        join(
-            ctx,
-            interaction,
-            event_id,
-            command_user,
-            Some(target_user),
-            kind,
-        )
-        .await?;
+    let command_user = interaction.get_user()?;
+    let target_user = match options.get_resolved("user")? {
+        None => Ok(command_user),
+        Some(OptionValue::User(user, _)) => Ok(user),
+        Some(v) => Err(format_err!("Unexpected resolved value type: {:?}", v)),
+    }?;
+    let kind = match options.get_value("join_kind")? {
+        None => Ok(JoinKind::Confirmed),
+        Some(Value::String(s)) => JoinKind::from_str(s),
+        Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+    }?;
 
-        Ok(())
-    }
+    join(
+        ctx,
+        interaction,
+        event_id,
+        command_user,
+        Some(target_user),
+        kind,
+    )
+    .await?;
+
+    Ok(())
 }
 
 pub async fn join(
