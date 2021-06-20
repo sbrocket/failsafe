@@ -19,7 +19,6 @@ use tracing::debug;
 mod macros;
 
 mod lfg;
-mod ping;
 
 /// Generic trait that all command types implement.
 pub trait Command: Send + Sync + std::fmt::Debug {
@@ -95,7 +94,6 @@ lazy_static! {
     /// List of all known commands; add new commands here as they're created.
     static ref COMMANDS: Vec<(&'static str, Box<dyn Command>)> = {
         vec![
-            Box::new(ping::Ping::new()) as Box<dyn Command>,
             Box::new(lfg::Lfg::new()) as Box<dyn Command>,
         ].into_iter().map(|c| (c.name(), c)).collect()
     };
