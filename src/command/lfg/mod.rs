@@ -22,6 +22,8 @@ mod show;
 const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
     InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
 
+// TODO: Reorder these so that join & leave appear first when typing `/lfg` in Discord. Need to
+// delete and recreate.
 define_command!(Lfg, "lfg", "Create and interact with scheduled events",
 Subcommands: [
     create::LfgCreate,
