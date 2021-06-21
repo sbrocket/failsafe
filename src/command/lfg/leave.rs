@@ -1,4 +1,4 @@
-use super::{edit_event_from_str, opts, EPHEMERAL_FLAG};
+use super::{edit_event_from_str, opts};
 use crate::{event::EventManager, util::*};
 use anyhow::{format_err, Result};
 use serde_json::Value;
@@ -62,26 +62,14 @@ pub async fn leave(
             error!("Failed to edit event: {:?}", err);
             let content =
                 "Sorry Captain, I seem to be having trouble removing you from that event...";
-            interaction
-                .create_interaction_response(&ctx, |resp| {
-                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-                })
-                .await?;
+            interaction.create_response(&ctx, content, true).await?;
         }
         (Ok(content), InteractionType::ApplicationCommand) => {
-            interaction
-                .create_interaction_response(&ctx, |resp| {
-                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-                })
-                .await?;
+            interaction.create_response(&ctx, content, true).await?;
         }
         (Ok(_), InteractionType::MessageComponent) => {
             // Just ACK component interactions.
-            interaction
-                .create_interaction_response(&ctx, |resp| {
-                    resp.kind(InteractionResponseType::DeferredUpdateMessage)
-                })
-                .await?;
+            interaction.create_ack_response(&ctx).await?;
         }
         (_, kind) => error!("Unexpected interaction kind {:?}", kind),
     }

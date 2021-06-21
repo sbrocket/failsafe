@@ -32,29 +32,21 @@ async fn lfg_show(
 
     let type_map = ctx.data.read().await;
     let event_manager = type_map.get::<EventManager>().unwrap();
-    let mut event = None;
-    interaction
-        .create_interaction_response(&ctx, |resp| {
-            resp.interaction_response_data(|msg| {
-                match get_event_from_str(event_manager, &event_id) {
-                    Ok(e) => {
-                        let ret = msg.add_embed(e.as_embed()).components(|c| {
-                            *c = e.event_buttons();
-                            c
-                        });
-                        event = Some(e);
-                        ret
-                    }
-                    Err(content) => msg.content(content),
-                }
-            })
-        })
-        .await?;
-    if let Some(event) = event {
-        let msg = interaction.get_interaction_response(&ctx).await?;
-        event
-            .keep_embed_updated(EventEmbedMessage::Normal(msg.channel_id, msg.id))
-            .await?;
+    match get_event_from_str(event_manager, &event_id) {
+        Ok(event) => {
+            interaction
+                .create_embed_response(&ctx, "", event.as_embed(), event.event_buttons(), false)
+                .await?;
+
+            let msg = interaction.get_interaction_response(&ctx).await?;
+            event
+                .keep_embed_updated(EventEmbedMessage::Normal(msg.channel_id, msg.id))
+                .await?;
+        }
+        Err(content) => {
+            interaction.create_response(&ctx, content, true).await?;
+        }
     }
+
     Ok(())
 }

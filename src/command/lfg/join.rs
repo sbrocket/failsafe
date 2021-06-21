@@ -1,4 +1,4 @@
-use super::{edit_event_from_str, get_event_from_str, opts, EPHEMERAL_FLAG};
+use super::{edit_event_from_str, get_event_from_str, opts};
 use crate::{
     command::OptionType,
     event::{EventEmbedMessage, EventManager, JoinKind},
@@ -129,26 +129,14 @@ pub async fn join(
                 target_user, event_id, err
             );
             let content = "Sorry Captain, I seem to be having trouble adding you to that event...";
-            interaction
-                .create_interaction_response(&ctx, |resp| {
-                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-                })
-                .await?;
+            interaction.create_response(&ctx, content, true).await?;
         }
         (Ok(content), InteractionType::ApplicationCommand) => {
-            interaction
-                .create_interaction_response(&ctx, |resp| {
-                    resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-                })
-                .await?;
+            interaction.create_response(&ctx, content, true).await?;
         }
         (Ok(_), InteractionType::MessageComponent) => {
             // Just ACK component interactions.
-            interaction
-                .create_interaction_response(&ctx, |resp| {
-                    resp.kind(InteractionResponseType::DeferredUpdateMessage)
-                })
-                .await?;
+            interaction.create_ack_response(&ctx).await?;
         }
         (_, kind) => error!("Unexpected interaction kind {:?}", kind),
     }

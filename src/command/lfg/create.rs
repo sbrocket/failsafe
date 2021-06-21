@@ -1,4 +1,3 @@
-use super::EPHEMERAL_FLAG;
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
@@ -92,21 +91,15 @@ async fn lfg_create(
         None => Err(format_err!("Missing required datetime value")),
     }?;
 
-    let send_response = |content| {
-        interaction.create_interaction_response(&ctx, |resp| {
-            resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-        })
-    };
-
     // Check that datetime format is good.
     let datetime = match parse_datetime(&datetime) {
         Ok(datetime) => datetime,
         Err(err) => {
-            send_response(format!(
+            let content = format!(
                 "Sorry Captain, I don't understand what '{}' means",
                 datetime
-            ))
-            .await?;
+            );
+            interaction.create_response(&ctx, content, true).await?;
             return Err(err.context(format!("Unable to parse provided datetime: {:?}", datetime)));
         }
     };
@@ -116,12 +109,12 @@ async fn lfg_create(
     // confirm?)
 
     // Ask for the event description in the main response.
-    send_response(format!(
+    let content = format!(
         "Captain, what's so special about this... *uhhh, \"{}\"?*  ...event anyway? \
                     Describe it for me...but in simple terms like for a Guardia...*oop!*",
         activity
-    ))
-    .await?;
+    );
+    interaction.create_response(&ctx, content, true).await?;
 
     // Wait for the user to reply with the description.
     if let Some(reply) = user
@@ -145,11 +138,10 @@ async fn lfg_create(
             Ok(event) => event,
             Err(err) => {
                 if let Err(edit_err) = interaction
-                    .edit_original_interaction_response(&ctx, |resp| {
-                        resp.content(
-                            "Sorry Captain, I seem to be having trouble creating your event...",
-                        )
-                    })
+                    .edit_response(
+                        &ctx,
+                        "Sorry Captain, I seem to be having trouble creating your event...",
+                    )
                     .await
                 {
                     error!(
@@ -161,17 +153,9 @@ async fn lfg_create(
             }
         };
 
-        // TODO: Add buttons to join event, post publicly
         let content = format!("Your event **{}** has been created, Captain!", event.id);
         interaction
-            .edit_original_interaction_response(&ctx, |resp| {
-                resp.content(&content)
-                    .add_embed(event.as_embed())
-                    .components(|c| {
-                        *c = event.event_buttons();
-                        c
-                    })
-            })
+            .edit_embed_response(&ctx, &content, event.as_embed(), event.event_buttons())
             .await
             .context("Failed to edit response after creating event")?;
         event
@@ -189,9 +173,7 @@ async fn lfg_create(
                 .mention(user)
                 .push("!** Are the Fallen dismantling *your* brain now? *Whatever, just gonna ask me again...not like I'm going anywhere...*")
                 .build();
-        interaction
-            .create_followup_message(&ctx, |msg| msg.content(content).flags(EPHEMERAL_FLAG))
-            .await?;
+        interaction.create_followup(&ctx, content, true).await?;
     };
     Ok(())
 }

@@ -5,9 +5,7 @@ use crate::{
 use anyhow::{format_err, Result};
 use serenity::{
     client::Context,
-    model::interactions::{
-        Interaction, InteractionApplicationCommandCallbackDataFlags, MessageComponent,
-    },
+    model::interactions::{Interaction, MessageComponent},
 };
 use std::str::FromStr;
 use tracing::debug;
@@ -19,9 +17,6 @@ mod delete;
 mod join;
 mod leave;
 mod show;
-
-const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
-    InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
 
 // TODO: Reorder these so that join & leave appear first when typing `/lfg` in Discord. Need to
 // delete and recreate.

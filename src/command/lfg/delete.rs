@@ -1,4 +1,4 @@
-use super::{get_event_from_str, opts, EPHEMERAL_FLAG};
+use super::{get_event_from_str, opts};
 use crate::{event::EventManager, util::*};
 use anyhow::{format_err, Result};
 use serde_json::Value;
@@ -66,11 +66,7 @@ async fn lfg_delete(
         }
         Err(str) => str,
     };
-    interaction
-        .create_interaction_response(&ctx, |resp| {
-            resp.interaction_response_data(|msg| msg.content(content).flags(EPHEMERAL_FLAG))
-        })
-        .await?;
+    interaction.create_response(&ctx, content, true).await?;
 
     Ok(())
 }
