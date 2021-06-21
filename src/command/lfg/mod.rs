@@ -6,8 +6,10 @@ use anyhow::{format_err, Result};
 use serenity::{
     client::Context,
     model::interactions::{Interaction, MessageComponent},
+    utils::MessageBuilder,
 };
 use std::str::FromStr;
+use std::time::Duration;
 use tracing::debug;
 
 mod opts;
@@ -71,6 +73,44 @@ async fn edit_event_from_str(
         Err(_) => {
             Ok("That's not a valid event ID, Captain. They look like this: `dsc123`".to_owned())
         }
+    }
+}
+
+const LFG_DESCRIPTION_TIMEOUT_SEC: u64 = 60;
+
+// Note that this creates the original interaction response, so subsequent logic must take care to
+// edit that response or create followups, rather than trying to create it again (which will fail).
+pub async fn ask_for_description(
+    ctx: &Context,
+    interaction: &Interaction,
+    query_content: impl ToString,
+) -> Result<Option<String>> {
+    let user = interaction.get_user()?;
+
+    interaction
+        .create_response(&ctx, query_content.to_string(), true)
+        .await?;
+
+    // Wait for the user to reply with the description.
+    if let Some(reply) = user
+        .await_reply(&ctx)
+        .timeout(Duration::from_secs(LFG_DESCRIPTION_TIMEOUT_SEC))
+        .await
+    {
+        // Immediately delete the user's (public) message since the rest of the bot interaction
+        // is ephemeral.
+        reply.delete(&ctx).await?;
+        Ok(Some(reply.content.clone()))
+    } else {
+        // Timed out waiting for the description, send a followup message so that the user can
+        // see the description request still and so the mention works.
+        let content = MessageBuilder::new()
+                .push("**Yoohoo, ")
+                .mention(user)
+                .push("!** Are the Fallen dismantling *your* brain now? *Whatever, just gonna ask me again...not like I'm going anywhere...*")
+                .build();
+        interaction.create_followup(&ctx, content, true).await?;
+        Ok(None)
     }
 }
 

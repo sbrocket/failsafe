@@ -1,3 +1,4 @@
+use super::ask_for_description;
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
@@ -13,9 +14,7 @@ use serde_json::Value;
 use serenity::{
     client::Context,
     model::interactions::{ApplicationCommandInteractionDataOption, Interaction},
-    utils::MessageBuilder,
 };
-use std::time::Duration;
 use tracing::{debug, error};
 
 macro_rules! define_create_commands {
@@ -67,8 +66,6 @@ define_command_option!(
 
 with_activity_types! { define_create_commands }
 
-const LFG_CREATE_DESCRIPTION_TIMEOUT_SEC: u64 = 60;
-
 #[command_attr::hook]
 async fn lfg_create(
     ctx: &Context,
@@ -114,66 +111,49 @@ async fn lfg_create(
                     Describe it for me...but in simple terms like for a Guardia...*oop!*",
         activity
     );
-    interaction.create_response(&ctx, content, true).await?;
+    let description = match ask_for_description(ctx, interaction, content).await? {
+        Some(str) => str,
+        None => return Ok(()),
+    };
+    debug!("Got event description: {:?}", description);
 
-    // Wait for the user to reply with the description.
-    if let Some(reply) = user
-        .await_reply(&ctx)
-        .timeout(Duration::from_secs(LFG_CREATE_DESCRIPTION_TIMEOUT_SEC))
+    // Create the event!
+    let mut type_map = ctx.data.write().await;
+    let event_manager = type_map.get_mut::<EventManager>().unwrap();
+    let event = match event_manager
+        .create_event(&user, activity, datetime, description)
         .await
     {
-        // Immediately delete the user's (public) message since the rest of the bot interaction
-        // is ephemeral.
-        reply.delete(&ctx).await?;
-
-        let description = &reply.content;
-        debug!("Got event description: {:?}", description);
-
-        let mut type_map = ctx.data.write().await;
-        let event_manager = type_map.get_mut::<EventManager>().unwrap();
-        let event = match event_manager
-            .create_event(&user, activity, datetime, description)
-            .await
-        {
-            Ok(event) => event,
-            Err(err) => {
-                if let Err(edit_err) = interaction
-                    .edit_response(
-                        &ctx,
-                        "Sorry Captain, I seem to be having trouble creating your event...",
-                    )
-                    .await
-                {
-                    error!(
-                        "Failed to edit response to indicate an error: {:?}",
-                        edit_err
-                    );
-                }
-                return Err(err.context("Failed to create event"));
+        Ok(event) => event,
+        Err(err) => {
+            if let Err(edit_err) = interaction
+                .edit_response(
+                    &ctx,
+                    "Sorry Captain, I seem to be having trouble creating your event...",
+                )
+                .await
+            {
+                error!(
+                    "Failed to edit response to indicate an error: {:?}",
+                    edit_err
+                );
             }
-        };
-
-        let content = format!("Your event **{}** has been created, Captain!", event.id);
-        interaction
-            .edit_embed_response(&ctx, &content, event.as_embed(), event.event_buttons())
-            .await
-            .context("Failed to edit response after creating event")?;
-        event
-            .keep_embed_updated(EventEmbedMessage::EphemeralResponse(
-                interaction.clone(),
-                recv_time,
-                content,
-            ))
-            .await?;
-    } else {
-        // Timed out waiting for the description, send a followup message so that the user can
-        // see the description request still and so the mention works.
-        let content = MessageBuilder::new()
-                .push("**Yoohoo, ")
-                .mention(user)
-                .push("!** Are the Fallen dismantling *your* brain now? *Whatever, just gonna ask me again...not like I'm going anywhere...*")
-                .build();
-        interaction.create_followup(&ctx, content, true).await?;
+            return Err(err.context("Failed to create event"));
+        }
     };
+
+    let content = format!("Your event **{}** has been created, Captain!", event.id);
+    interaction
+        .edit_embed_response(&ctx, &content, event.as_embed(), event.event_buttons())
+        .await
+        .context("Failed to edit response after creating event")?;
+    event
+        .keep_embed_updated(EventEmbedMessage::EphemeralResponse(
+            interaction.clone(),
+            recv_time,
+            content,
+        ))
+        .await?;
+
     Ok(())
 }
