@@ -279,6 +279,8 @@ pub struct Event {
     pub datetime: DateTime<Tz>,
     pub description: String,
     pub group_size: u8,
+    #[serde(default)]
+    pub recur: bool,
     pub creator: EventUser,
     pub confirmed: Vec<EventUser>,
     pub alternates: Vec<EventUser>,
@@ -700,6 +702,7 @@ impl EventManager {
             datetime,
             description,
             group_size: activity.default_group_size(),
+            recur: false,
             creator: creator.clone(),
             confirmed: vec![creator],
             alternates: vec![],
@@ -838,6 +841,7 @@ mod tests {
                     datetime: Utc::now().with_timezone(&Tz::PST8PDT),
                     description: "".to_string(),
                     group_size: 1,
+                    recur: false,
                     creator: EventUser {
                         id: user.id,
                         name: user.name.clone(),

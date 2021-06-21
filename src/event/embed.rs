@@ -421,6 +421,7 @@ mod test {
             datetime: Utc::now().with_timezone(&Tz::PST8PDT) + Duration::hours(hours_away),
             description: "".to_string(),
             group_size: 1,
+            recur: false,
             creator: EventUser {
                 id: user.id,
                 name: user.name.clone(),
