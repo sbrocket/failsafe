@@ -4,7 +4,7 @@ macro_rules! define_command_option {
         name: $name:literal,
         description: $descr:literal,
         required: $required:literal,
-        option_type: $option_type:expr,
+        option_type: $option_type:expr $(,)?
     ) => {
         #[allow(non_snake_case)]
         pub mod $id {
@@ -23,7 +23,7 @@ macro_rules! define_command_option {
 }
 
 macro_rules! define_leaf_command {
-    ($id:ident, $name:literal, $descr:expr, $handler:ident, options: [$($($opt_path:ident)::+),* $(,)?],) => {
+    ($id:ident, $name:literal, $descr:expr, $handler:ident, options: [$($($opt_path:ident)::+),* $(,)?] $(,)?) => {
         #[allow(non_snake_case)]
         pub mod $id {
             #[allow(unused)]

@@ -16,6 +16,7 @@ mod opts;
 
 mod create;
 mod delete;
+mod edit;
 mod join;
 mod leave;
 mod show;
@@ -29,6 +30,7 @@ define_command_group!(
     subcommands: [
         create::LfgCreate,
         delete::LfgDelete,
+        edit::LfgEdit,
         join::LfgJoin,
         leave::LfgLeave,
         show::LfgShow,

@@ -1,4 +1,4 @@
-use super::ask_for_description;
+use super::{ask_for_description, opts};
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
@@ -33,7 +33,7 @@ macro_rules! define_create_commands {
                     $cmd,
                     concat!("Create a new ", $name, " event"),
                     lfg_create,
-                    options: [ [<ActivityOpt $enum_name>], DatetimeOpt ],
+                    options: [ [<ActivityOpt $enum_name>], opts::Datetime ],
                 );
 
                 define_command_option!(
@@ -55,14 +55,6 @@ macro_rules! define_create_commands {
         }
     }
 }
-
-define_command_option!(
-    id: DatetimeOpt,
-    name: "datetime",
-    description: "Date & time for this event, in \"h:m am/pm tz mm/dd\" format (e.g. \"8:00 PM CT 4/20\")",
-    required: true,
-    option_type: OptionType::String(&[]),
-);
 
 with_activity_types! { define_create_commands }
 
