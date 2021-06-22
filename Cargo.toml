@@ -12,6 +12,7 @@ command_attr = "0.3"
 dotenv = "0.15"
 dtparse = "1.2"
 enum-iterator = "0.6"
+fs2="0.4"
 futures = "0.3"
 itertools = "0.10"
 lazy_static = "1.4"
@@ -23,6 +24,9 @@ tokio = { version = "1.6", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.2"
 static_assertions = "1.1"
+
+[dev-dependencies]
+tempdir = "0.3"
 
 [dependencies.serenity]
 default-features = false

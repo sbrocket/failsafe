@@ -5,6 +5,7 @@ use serenity::{
     model::{gateway::Ready, id::GuildId, interactions::Interaction},
     prelude::*,
 };
+use store::PersistentStoreBuilder;
 use tokio::sync::OnceCell;
 use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
@@ -14,6 +15,7 @@ mod activity;
 
 mod command;
 mod event;
+mod store;
 mod time;
 mod util;
 
@@ -84,8 +86,11 @@ async fn main() {
         .await
         .expect("Error creating client");
 
-    let event_store = std::env::var("EVENT_MANAGER_STORE").expect("Missing $EVENT_MANAGER_STORE");
-    let event_manager = EventManager::new(event_store, client.cache_and_http.clone())
+    let event_store = std::env::var("PERSISTENT_STORE_DIR").expect("Missing $PERSISTENT_STORE_DIR");
+    let store_builder = PersistentStoreBuilder::new(event_store)
+        .await
+        .expect("Failed to create PersistentStoreBuilder");
+    let event_manager = EventManager::new(store_builder, client.cache_and_http.clone())
         .await
         .expect("Failed to create EventManager");
 
