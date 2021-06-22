@@ -43,8 +43,8 @@ pub async fn leave(
 ) -> Result<()> {
     let mut type_map = ctx.data.write().await;
     let event_manager = type_map.get_mut::<EventManager>().unwrap();
-    let edit_result = edit_event_from_str(&ctx, event_manager, &event_id, |event| {
-        match event.leave(&user) {
+    let edit_result =
+        edit_event_from_str(event_manager, &event_id, |event| match event.leave(&user) {
             Ok(()) => format!(
                 "Removed you from the {} event at {}",
                 event.activity,
@@ -53,9 +53,8 @@ pub async fn leave(
             Err(_) => {
                 "*Hey, you're not even in that event... did you think I'd forget?*".to_owned()
             }
-        }
-    })
-    .await;
+        })
+        .await;
 
     match (edit_result, interaction.kind) {
         (Err(err), _) => {

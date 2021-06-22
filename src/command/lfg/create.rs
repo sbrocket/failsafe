@@ -134,17 +134,17 @@ async fn lfg_create(
         }
     };
 
-    let content = format!("Your event **{}** has been created, Captain!", event.id);
+    let event_id = event.id;
+    let content = format!("Your event **{}** has been created, Captain!", event_id);
     interaction
         .edit_embed_response(&ctx, &content, event.as_embed(), event.event_buttons())
         .await
         .context("Failed to edit response after creating event")?;
-    event
-        .keep_embed_updated(EventEmbedMessage::EphemeralResponse(
-            interaction.clone(),
-            recv_time,
-            content,
-        ))
+    event_manager
+        .keep_embed_updated(
+            event_id,
+            EventEmbedMessage::EphemeralResponse(interaction.clone(), recv_time, content),
+        )
         .await?;
 
     Ok(())

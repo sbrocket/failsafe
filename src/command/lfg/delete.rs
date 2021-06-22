@@ -54,7 +54,7 @@ async fn lfg_delete(
     let content = match check_result {
         Ok(event_id) => {
             // Permission check passed, delete the event.
-            if let Err(err) = event_manager.delete_event(&ctx, &event_id).await {
+            if let Err(err) = event_manager.delete_event(&event_id).await {
                 error!("Failed to delete event {}: {}", event_id, err);
                 "Sorry Captain, I seem to be having trouble deleting that event...".to_owned()
             } else {

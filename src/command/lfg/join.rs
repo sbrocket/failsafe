@@ -108,7 +108,7 @@ pub async fn join(
 
     let mut type_map = ctx.data.write().await;
     let event_manager = type_map.get_mut::<EventManager>().unwrap();
-    let edit_result = edit_event_from_str(&ctx, event_manager, &event_id, |event| {
+    let edit_result = edit_event_from_str(event_manager, &event_id, |event| {
         match event.join(&target_user, kind) {
             Ok(()) => format!(
                 "Added {} to the {} event at {} as **{}**!",
@@ -168,8 +168,8 @@ pub async fn join(
             })
             .await
             .context("Error sending added user a DM notification")?;
-        event
-            .keep_embed_updated(EventEmbedMessage::Normal(dm.channel_id, dm.id))
+        event_manager
+            .keep_embed_updated(event.id, EventEmbedMessage::Normal(dm.channel_id, dm.id))
             .await?;
     }
 

@@ -14,6 +14,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 mod activity;
 
 mod command;
+mod embed;
 mod event;
 mod store;
 mod time;
@@ -90,7 +91,7 @@ async fn main() {
     let store_builder = PersistentStoreBuilder::new(event_store)
         .await
         .expect("Failed to create PersistentStoreBuilder");
-    let event_manager = EventManager::new(store_builder, client.cache_and_http.clone())
+    let event_manager = EventManager::new(&store_builder, client.cache_and_http.clone())
         .await
         .expect("Failed to create EventManager");
 

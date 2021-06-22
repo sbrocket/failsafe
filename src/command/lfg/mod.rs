@@ -1,5 +1,5 @@
 use crate::{
-    event::{Event, EventHandle, EventId, EventManager, JoinKind},
+    event::{Event, EventId, EventManager, JoinKind},
     util::*,
 };
 use anyhow::{format_err, Result};
@@ -41,7 +41,7 @@ define_command_group!(
 fn get_event_from_str(
     event_manager: &EventManager,
     id_str: impl AsRef<str>,
-) -> Result<EventHandle<'_>, String> {
+) -> Result<&Event, String> {
     let id_str = id_str.as_ref();
     match EventId::from_str(&id_str) {
         Ok(event_id) => match event_manager.get_event(&event_id) {
@@ -57,7 +57,6 @@ fn get_event_from_str(
 /// Runs the given closure on the matching Event, returning the message it generates or else an
 /// error message to use in the interaction reponse.
 async fn edit_event_from_str(
-    ctx: &Context,
     event_manager: &mut EventManager,
     id_str: impl AsRef<str>,
     edit_fn: impl FnOnce(&mut Event) -> String,
@@ -66,7 +65,7 @@ async fn edit_event_from_str(
     match EventId::from_str(&id_str) {
         Ok(event_id) => {
             event_manager
-                .edit_event(ctx, &event_id, |event| match event {
+                .edit_event(&event_id, |event| match event {
                     Some(event) => edit_fn(event),
                     None => format!("I couldn't find an event with ID '{}'", event_id),
                 })

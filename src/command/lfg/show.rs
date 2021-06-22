@@ -39,8 +39,8 @@ async fn lfg_show(
                 .await?;
 
             let msg = interaction.get_interaction_response(&ctx).await?;
-            event
-                .keep_embed_updated(EventEmbedMessage::Normal(msg.channel_id, msg.id))
+            event_manager
+                .keep_embed_updated(event.id, EventEmbedMessage::Normal(msg.channel_id, msg.id))
                 .await?;
         }
         Err(content) => {
