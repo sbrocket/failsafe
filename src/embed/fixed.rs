@@ -129,7 +129,10 @@ impl EmbedMessages {
                                 EventEmbedMessage::EphemeralResponse(interaction, ..) => {
                                     interaction
                                         .edit_original_interaction_response(http, |resp| {
-                                            resp.set_embeds(vec![])
+                                            resp.set_embeds(vec![]).components(|c| {
+                                                *c = Default::default();
+                                                c
+                                            })
                                         })
                                         .await
                                         .and(Ok(()))
@@ -271,7 +274,12 @@ impl EventEmbedMessage {
 
                 let http = Http::new_with_application_id(interaction.application_id.into());
                 if let Err(err) = interaction
-                    .edit_original_interaction_response(&http, |resp| resp.content(content))
+                    .edit_original_interaction_response(&http, |resp| {
+                        resp.content(content).set_embeds(vec![]).components(|c| {
+                            *c = Default::default();
+                            c
+                        })
+                    })
                     .await
                 {
                     error!(
