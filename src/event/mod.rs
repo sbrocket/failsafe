@@ -296,6 +296,28 @@ pub struct Event {
     embed_messages: EmbedMessages,
 }
 
+#[cfg(test)]
+impl Default for Event {
+    fn default() -> Self {
+        let user = User::default();
+        let creator = EventUser::from(&user);
+        let activity = Activity::Custom;
+        Event {
+            id: event_id(activity, 1),
+            activity,
+            datetime: Utc::now().with_timezone(&Tz::PST8PDT),
+            description: "".to_owned(),
+            group_size: activity.default_group_size(),
+            recur: false,
+            creator: creator.clone(),
+            confirmed: vec![creator],
+            alternates: vec![],
+            maybe: vec![],
+            embed_messages: Default::default(),
+        }
+    }
+}
+
 // TODO: Switch to deriving this once embed_messages is moved out
 impl PartialEq for Event {
     fn eq(&self, other: &Self) -> bool {
@@ -832,24 +854,12 @@ mod tests {
         activity: Activity,
         indexes: impl IntoIterator<Item = u8>,
     ) {
-        let user = User::default();
         for index in indexes {
             manager
                 .add_test_event(Event {
                     id: event_id(activity, index),
                     activity,
-                    datetime: Utc::now().with_timezone(&Tz::PST8PDT),
-                    description: "".to_string(),
-                    group_size: 1,
-                    recur: false,
-                    creator: EventUser {
-                        id: user.id,
-                        name: user.name.clone(),
-                    },
-                    confirmed: vec![],
-                    alternates: vec![],
-                    maybe: vec![],
-                    embed_messages: Default::default(),
+                    ..Default::default()
                 })
                 .await
                 .expect("Error while adding test events");

@@ -407,29 +407,17 @@ impl EmbedUpdater {
 mod test {
     use super::*;
     use crate::activity::{Activity, ActivityType};
-    use crate::event::{Event, EventId, EventUser};
+    use crate::event::{Event, EventId};
     use chrono::{Duration, Utc};
     use chrono_tz::Tz;
-    use serenity::model::prelude::*;
     use std::iter;
 
     fn test_event(activity: Activity, idx: u8, hours_away: i64) -> Arc<Event> {
-        let user = User::default();
         Arc::new(Event {
             id: EventId { activity, idx },
             activity,
             datetime: Utc::now().with_timezone(&Tz::PST8PDT) + Duration::hours(hours_away),
-            description: "".to_string(),
-            group_size: 1,
-            recur: false,
-            creator: EventUser {
-                id: user.id,
-                name: user.name.clone(),
-            },
-            confirmed: vec![],
-            alternates: vec![],
-            maybe: vec![],
-            embed_messages: Default::default(),
+            ..Default::default()
         })
     }
 
