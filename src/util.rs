@@ -17,7 +17,7 @@ use serenity::{
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use tokio::fs::File;
 
-use crate::event::EventManager;
+use crate::{event::EventManager, guild::GuildManager};
 
 const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
     InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
@@ -77,18 +77,7 @@ pub trait OptionsExt {
 
 #[async_trait]
 pub trait ContextExt {
-    async fn get_event_manager(&self) -> Arc<EventManager>;
-}
-
-#[async_trait]
-impl ContextExt for Context {
-    async fn get_event_manager(&self) -> Arc<EventManager> {
-        let type_map = self.data.read().await;
-        type_map
-            .get::<EventManager>()
-            .expect("No EventManager in Context")
-            .clone()
-    }
+    async fn get_event_manager(&self, interaction: &Interaction) -> Arc<EventManager>;
 }
 
 #[async_trait]
@@ -226,6 +215,21 @@ impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
             || Err(format_err!("No resolved value for option '{}'", name)),
             |v| Ok(Some(v)),
         )
+    }
+}
+
+#[async_trait]
+impl ContextExt for Context {
+    async fn get_event_manager(&self, interaction: &Interaction) -> Arc<EventManager> {
+        let type_map = self.data.read().await;
+        let guild_manager = type_map
+            .get::<GuildManager>()
+            .expect("No GuildManager in TypeMap");
+
+        let guild_id = interaction
+            .guild_id
+            .expect("Called with non-guild command Interaction");
+        guild_manager.get_event_manager(guild_id).await
     }
 }
 

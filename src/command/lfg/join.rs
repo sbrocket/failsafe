@@ -106,7 +106,7 @@ pub async fn join(
         "you".to_owned()
     };
 
-    let event_manager = ctx.get_event_manager().await;
+    let event_manager = ctx.get_event_manager(&interaction).await;
     let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         match event.join(&target_user, kind) {
             Ok(()) => format!(

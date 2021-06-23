@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use command::CommandManager;
-use event::EventManager;
+use guild::GuildManager;
 use serenity::{
     async_trait,
     model::{gateway::Ready, id::GuildId, interactions::Interaction},
@@ -18,6 +16,7 @@ mod activity;
 mod command;
 mod embed;
 mod event;
+mod guild;
 mod store;
 mod time;
 mod util;
@@ -93,13 +92,11 @@ async fn main() {
     let store_builder = PersistentStoreBuilder::new(event_store)
         .await
         .expect("Failed to create PersistentStoreBuilder");
-    let event_manager = EventManager::new(&store_builder, client.cache_and_http.clone())
-        .await
-        .expect("Failed to create EventManager");
+    let guild_manager = GuildManager::new(store_builder, client.cache_and_http.clone());
 
     {
         let mut typemap = client.data.write().await;
-        typemap.insert::<EventManager>(Arc::new(event_manager));
+        typemap.insert::<GuildManager>(guild_manager);
     }
 
     client.start().await.expect("Client error");
