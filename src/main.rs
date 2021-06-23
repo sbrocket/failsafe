@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use command::CommandManager;
 use event::EventManager;
 use serenity::{
@@ -97,7 +99,7 @@ async fn main() {
 
     {
         let mut typemap = client.data.write().await;
-        typemap.insert::<EventManager>(event_manager);
+        typemap.insert::<EventManager>(Arc::new(event_manager));
     }
 
     client.start().await.expect("Client error");

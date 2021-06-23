@@ -24,6 +24,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use tokio::sync::RwLock;
 
 pub use crate::embed::EventEmbedMessage;
 
@@ -358,155 +359,25 @@ type EventsCollection = BTreeMap<EventId, Arc<Event>>;
 
 const STORE_NAME: &str = "events.json";
 
-/// Manages a single server's worth of events.
-pub struct EventManager {
-    store: PersistentStore<EventsCollection>,
+struct EventManagerState {
     events: EventsCollection,
     next_id: HashMap<Activity, u8>,
     embed_manager: Option<EmbedManager>,
 }
 
-impl EventManager {
-    pub async fn new(
-        store_builder: &PersistentStoreBuilder,
-        http: Arc<CacheAndHttp>,
-    ) -> Result<Self> {
-        let store = store_builder.build(STORE_NAME).await?;
-        let events: EventsCollection = store.load().await?;
-        let embed_manager = Some(EmbedManager::new(store_builder, http, events.values()).await?);
-
-        Ok(EventManager {
-            store,
-            events,
-            next_id: Default::default(),
-            embed_manager,
-        })
-    }
-
-    /// A test-only, async Default-like method.
-    #[cfg(test)]
-    pub async fn default() -> Self {
-        let tempdir = tempdir::TempDir::new("EventManager").expect("Failed to create tempdir");
-        let builder = PersistentStoreBuilder::new(tempdir.into_path())
-            .await
-            .expect("Failed to create PersistentStoreBuilder");
-        EventManager {
-            store: builder.build(STORE_NAME).await.unwrap(),
+#[cfg(test)]
+impl Default for EventManagerState {
+    fn default() -> Self {
+        EventManagerState {
             events: Default::default(),
             next_id: Default::default(),
             embed_manager: None,
         }
     }
+}
 
-    pub async fn create_event(
-        &mut self,
-        creator: &User,
-        activity: Activity,
-        datetime: DateTime<Tz>,
-        description: impl Into<String>,
-    ) -> Result<&Event> {
-        let id = self.next_id(activity)?;
-        let description = description.into();
-        let creator: EventUser = creator.into();
-        let event = Arc::new(Event {
-            id,
-            activity,
-            datetime,
-            description,
-            group_size: activity.default_group_size(),
-            recur: false,
-            creator: creator.clone(),
-            confirmed: vec![creator],
-            alternates: vec![],
-            maybe: vec![],
-        });
-        self.events.insert(id, event.clone());
-        self.store.store(&self.events).await?;
-        if let Some(mgr) = &mut self.embed_manager {
-            mgr.event_added(event).await;
-        }
-
-        let event = self.events.get(&id).unwrap();
-        Ok(&event)
-    }
-
-    #[cfg(test)]
-    async fn add_test_event(&mut self, event: Event) -> Result<&Event> {
-        anyhow::ensure!(
-            !self.events.contains_key(&event.id),
-            "Event already exists with ID {}",
-            &event.id
-        );
-
-        let key = event.id;
-        let event = Arc::new(event);
-        self.events.insert(key, event.clone());
-        self.store.store(&self.events).await?;
-        if let Some(mgr) = &mut self.embed_manager {
-            mgr.event_added(event).await;
-        }
-        Ok(self.events.get(&key).unwrap())
-    }
-
-    pub fn get_event(&self, id: &EventId) -> Option<&Event> {
-        let events = &self.events;
-        events.get(&id).map(|e| &**e)
-    }
-
-    /// Run the provided closure with a mutable reference to the event with the given ID, if one
-    /// exists. State is persisted to the store before this returns, and an async task started to
-    /// update event embeds.
-    pub async fn edit_event<T>(
-        &mut self,
-        id: &EventId,
-        edit_fn: impl FnOnce(Option<&mut Event>) -> T,
-    ) -> Result<T> {
-        // Clone the current Event value for this id
-        Ok(match self.events.get_mut(&id) {
-            Some(event) => {
-                let mut modified = (**event).clone();
-                let ret = edit_fn(Some(&mut modified));
-                *event = Arc::new(modified);
-
-                let event = event.clone();
-                self.store.store(&self.events).await?;
-                if let Some(mgr) = &mut self.embed_manager {
-                    mgr.event_edited(event).await;
-                }
-                ret
-            }
-            None => edit_fn(None),
-        })
-    }
-
-    pub async fn delete_event(&mut self, id: &EventId) -> Result<()> {
-        let event = self
-            .events
-            .remove(&id)
-            .ok_or(format_err!("Event {} does not exist", id))?;
-
-        self.store.store(&self.events).await?;
-        if let Some(mgr) = &mut self.embed_manager {
-            mgr.event_deleted(event).await?;
-        }
-        Ok(())
-    }
-
-    /// Adds a new message that contains this event's embed and which should be kept up to date as
-    /// the event is modified.
-    pub async fn keep_embed_updated(
-        &self,
-        event_id: EventId,
-        msg: EventEmbedMessage,
-    ) -> Result<()> {
-        self.embed_manager
-            .as_ref()
-            .expect("EmbedManager None, bad test")
-            .keep_embed_updated(event_id, msg)
-            .await
-    }
-
-    fn next_id(&mut self, activity: Activity) -> Result<EventId> {
+impl EventManagerState {
+    pub fn next_id(&mut self, activity: Activity) -> Result<EventId> {
         // We don't need to find the lowest unused ID or anything fancy, just find the next unused
         // ID and wrap once maxed out. next_id can be inaccurate or uninitialized for a given
         // activity type since we check the known events.
@@ -533,8 +404,170 @@ impl EventManager {
     }
 }
 
+/// Manages a single server's worth of events.
+pub struct EventManager {
+    store: PersistentStore<EventsCollection>,
+    state: RwLock<EventManagerState>,
+}
+
+impl EventManager {
+    pub async fn new(
+        store_builder: &PersistentStoreBuilder,
+        http: Arc<CacheAndHttp>,
+    ) -> Result<Self> {
+        let store = store_builder.build(STORE_NAME).await?;
+        let events: EventsCollection = store.load().await?;
+        let embed_manager = Some(EmbedManager::new(store_builder, http, events.values()).await?);
+
+        Ok(EventManager {
+            store,
+            state: RwLock::new(EventManagerState {
+                events,
+                next_id: Default::default(),
+                embed_manager,
+            }),
+        })
+    }
+
+    /// A test-only, async Default-like method.
+    #[cfg(test)]
+    pub async fn default() -> Self {
+        let tempdir = tempdir::TempDir::new("EventManager").expect("Failed to create tempdir");
+        let builder = PersistentStoreBuilder::new(tempdir.into_path())
+            .await
+            .expect("Failed to create PersistentStoreBuilder");
+        EventManager {
+            store: builder.build(STORE_NAME).await.unwrap(),
+            state: Default::default(),
+        }
+    }
+
+    pub async fn create_event(
+        &self,
+        creator: &User,
+        activity: Activity,
+        datetime: DateTime<Tz>,
+        description: impl Into<String>,
+    ) -> Result<Arc<Event>> {
+        let mut state = self.state.write().await;
+        let id = state.next_id(activity)?;
+        let description = description.into();
+        let creator: EventUser = creator.into();
+        let event = Arc::new(Event {
+            id,
+            activity,
+            datetime,
+            description,
+            group_size: activity.default_group_size(),
+            recur: false,
+            creator: creator.clone(),
+            confirmed: vec![creator],
+            alternates: vec![],
+            maybe: vec![],
+        });
+
+        state.events.insert(id, event.clone());
+        self.store.store(&state.events).await?;
+        if let Some(mgr) = &mut state.embed_manager {
+            mgr.event_added(event).await;
+        }
+
+        let event = state.events.get(&id).unwrap().clone();
+        Ok(event)
+    }
+
+    #[cfg(test)]
+    async fn add_test_event(&self, event: Event) -> Result<()> {
+        let mut state = self.state.write().await;
+        anyhow::ensure!(
+            !state.events.contains_key(&event.id),
+            "Event already exists with ID {}",
+            &event.id
+        );
+
+        let key = event.id;
+        let event = Arc::new(event);
+        state.events.insert(key, event.clone());
+        self.store.store(&state.events).await?;
+        if let Some(mgr) = &mut state.embed_manager {
+            mgr.event_added(event).await;
+        }
+        Ok(())
+    }
+
+    pub async fn get_event(&self, id: &EventId) -> Option<Arc<Event>> {
+        let state = self.state.read().await;
+        let events = &state.events;
+        events.get(&id).map(|e| e.clone())
+    }
+
+    /// Run the provided closure with a mutable reference to the event with the given ID, if one
+    /// exists. State is persisted to the store before this returns, and an async task started to
+    /// update event embeds.
+    pub async fn edit_event<T>(
+        &self,
+        id: &EventId,
+        edit_fn: impl FnOnce(Option<&mut Event>) -> T,
+    ) -> Result<T> {
+        let mut state = self.state.write().await;
+
+        // Clone the current Event value for this id
+        Ok(match state.events.get_mut(&id) {
+            Some(event) => {
+                let mut modified = (**event).clone();
+                let ret = edit_fn(Some(&mut modified));
+                *event = Arc::new(modified);
+
+                let event = event.clone();
+                self.store.store(&state.events).await?;
+                if let Some(mgr) = &mut state.embed_manager {
+                    mgr.event_edited(event).await;
+                }
+                ret
+            }
+            None => edit_fn(None),
+        })
+    }
+
+    pub async fn delete_event(&self, id: &EventId) -> Result<()> {
+        let mut state = self.state.write().await;
+        let event = state
+            .events
+            .remove(&id)
+            .ok_or(format_err!("Event {} does not exist", id))?;
+
+        self.store.store(&state.events).await?;
+        if let Some(mgr) = &mut state.embed_manager {
+            mgr.event_deleted(event).await?;
+        }
+        Ok(())
+    }
+
+    /// Adds a new message that contains this event's embed and which should be kept up to date as
+    /// the event is modified.
+    pub async fn keep_embed_updated(
+        &self,
+        event_id: EventId,
+        msg: EventEmbedMessage,
+    ) -> Result<()> {
+        let state = self.state.read().await;
+        state
+            .embed_manager
+            .as_ref()
+            .expect("EmbedManager None, bad test")
+            .keep_embed_updated(event_id, msg)
+            .await
+    }
+
+    #[cfg(test)]
+    pub async fn next_id(&self, activity: Activity) -> Result<EventId> {
+        let mut state = self.state.write().await;
+        state.next_id(activity)
+    }
+}
+
 impl TypeMapKey for EventManager {
-    type Value = EventManager;
+    type Value = Arc<EventManager>;
 }
 
 #[cfg(test)]
@@ -543,7 +576,7 @@ mod tests {
     use std::iter;
 
     async fn add_events_to_manager(
-        manager: &mut EventManager,
+        manager: &EventManager,
         activity: Activity,
         indexes: impl IntoIterator<Item = u8>,
     ) {
@@ -570,48 +603,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_id_advances() {
-        let mut manager = EventManager::default().await;
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 1));
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 2));
+        let manager = EventManager::default().await;
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 1));
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 2));
         // Other activities are unaffected.
-        assert_eq!(manager.next_id(GOS).unwrap(), event_id(GOS, 1));
-        assert_eq!(manager.next_id(GOS).unwrap(), event_id(GOS, 2));
+        assert_eq!(manager.next_id(GOS).await.unwrap(), event_id(GOS, 1));
+        assert_eq!(manager.next_id(GOS).await.unwrap(), event_id(GOS, 2));
     }
 
     #[tokio::test]
     async fn test_next_id_gaps() {
-        let mut manager = EventManager::default().await;
-        add_events_to_manager(&mut manager, VOG, (1u8..=20).chain(23u8..=50)).await;
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 21));
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 22));
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 51));
+        let manager = EventManager::default().await;
+        add_events_to_manager(&manager, VOG, (1u8..=20).chain(23u8..=50)).await;
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 21));
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 22));
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 51));
     }
 
     #[tokio::test]
     async fn test_next_id_wraps() {
-        let mut manager = EventManager::default().await;
-        add_events_to_manager(&mut manager, VOG, (1u8..=41).chain(44u8..=255)).await;
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 42));
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 43));
+        let manager = EventManager::default().await;
+        add_events_to_manager(&manager, VOG, (1u8..=41).chain(44u8..=255)).await;
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 42));
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 43));
         // Will wrap around and find the still unused indexes.
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 42));
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 43));
-        add_events_to_manager(&mut manager, VOG, iter::once(42)).await;
-        assert_eq!(manager.next_id(VOG).unwrap(), event_id(VOG, 43));
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 42));
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 43));
+        add_events_to_manager(&manager, VOG, iter::once(42)).await;
+        assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 43));
     }
 
     #[tokio::test]
     async fn test_next_exhausted() {
-        let mut manager = EventManager::default().await;
-        add_events_to_manager(&mut manager, VOG, 1u8..=255).await;
-        assert!(manager.next_id(VOG).is_err());
+        let manager = EventManager::default().await;
+        add_events_to_manager(&manager, VOG, 1u8..=255).await;
+        assert!(manager.next_id(VOG).await.is_err());
         // Other activities are unaffected.
-        assert_eq!(manager.next_id(GOS).unwrap(), event_id(GOS, 1));
+        assert_eq!(manager.next_id(GOS).await.unwrap(), event_id(GOS, 1));
     }
 
     #[tokio::test]
     async fn test_create_event() {
-        let mut manager = EventManager::default().await;
+        let manager = EventManager::default().await;
         let t = Utc::now().with_timezone(&Tz::PST8PDT);
         let user = User::default();
         assert_eq!(

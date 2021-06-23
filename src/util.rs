@@ -4,6 +4,7 @@ use serde_json::Value;
 use serenity::{
     async_trait,
     builder::{CreateComponents, CreateEmbed},
+    client::Context,
     http::Http,
     model::{
         interactions::{
@@ -13,8 +14,10 @@ use serenity::{
         prelude::*,
     },
 };
-use std::{io::ErrorKind, path::PathBuf};
+use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use tokio::fs::File;
+
+use crate::event::EventManager;
 
 const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
     InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
@@ -70,6 +73,22 @@ pub trait OptionsExt {
     fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>>;
 
     fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>>;
+}
+
+#[async_trait]
+pub trait ContextExt {
+    async fn get_event_manager(&self) -> Arc<EventManager>;
+}
+
+#[async_trait]
+impl ContextExt for Context {
+    async fn get_event_manager(&self) -> Arc<EventManager> {
+        let type_map = self.data.read().await;
+        type_map
+            .get::<EventManager>()
+            .expect("No EventManager in Context")
+            .clone()
+    }
 }
 
 #[async_trait]

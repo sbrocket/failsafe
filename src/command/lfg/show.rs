@@ -1,8 +1,5 @@
 use super::{get_event_from_str, opts};
-use crate::{
-    event::{EventEmbedMessage, EventManager},
-    util::*,
-};
+use crate::{event::EventEmbedMessage, util::*};
 use anyhow::{format_err, Result};
 use serde_json::Value;
 use serenity::{
@@ -30,9 +27,8 @@ async fn lfg_show(
         None => Err(format_err!("Missing required event_id value")),
     }?;
 
-    let type_map = ctx.data.read().await;
-    let event_manager = type_map.get::<EventManager>().unwrap();
-    match get_event_from_str(event_manager, &event_id) {
+    let event_manager = ctx.get_event_manager().await;
+    match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             interaction
                 .create_embed_response(&ctx, "", event.as_embed(), event.event_buttons(), false)

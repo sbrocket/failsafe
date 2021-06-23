@@ -2,7 +2,7 @@ use super::{ask_for_description, opts};
 use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
-    event::{EventEmbedMessage, EventManager},
+    event::EventEmbedMessage,
     time::parse_datetime,
     util::*,
 };
@@ -110,8 +110,7 @@ async fn lfg_create(
     debug!("Got event description: {:?}", description);
 
     // Create the event!
-    let mut type_map = ctx.data.write().await;
-    let event_manager = type_map.get_mut::<EventManager>().unwrap();
+    let event_manager = ctx.get_event_manager().await;
     let event = match event_manager
         .create_event(&user, activity, datetime, description)
         .await

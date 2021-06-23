@@ -8,8 +8,8 @@ use serenity::{
     model::interactions::{Interaction, MessageComponent},
     utils::MessageBuilder,
 };
-use std::str::FromStr;
 use std::time::Duration;
+use std::{str::FromStr, sync::Arc};
 use tracing::debug;
 
 mod opts;
@@ -38,13 +38,13 @@ define_command_group!(
 );
 
 /// Returns the matching Event or else an error message to use in the interaction reponse.
-fn get_event_from_str(
+async fn get_event_from_str(
     event_manager: &EventManager,
     id_str: impl AsRef<str>,
-) -> Result<&Event, String> {
+) -> Result<Arc<Event>, String> {
     let id_str = id_str.as_ref();
     match EventId::from_str(&id_str) {
-        Ok(event_id) => match event_manager.get_event(&event_id) {
+        Ok(event_id) => match event_manager.get_event(&event_id).await {
             Some(event) => Ok(event),
             None => Err(format!("I couldn't find an event with ID '{}'", event_id)),
         },
@@ -57,7 +57,7 @@ fn get_event_from_str(
 /// Runs the given closure on the matching Event, returning the message it generates or else an
 /// error message to use in the interaction reponse.
 async fn edit_event_from_str(
-    event_manager: &mut EventManager,
+    event_manager: &EventManager,
     id_str: impl AsRef<str>,
     edit_fn: impl FnOnce(&mut Event) -> String,
 ) -> Result<String> {

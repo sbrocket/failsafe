@@ -1,5 +1,5 @@
 use super::{get_event_from_str, opts};
-use crate::{event::EventManager, util::*};
+use crate::util::*;
 use anyhow::{format_err, Result};
 use serde_json::Value;
 use serenity::{
@@ -37,9 +37,8 @@ async fn lfg_delete(
         .as_ref()
         .ok_or_else(|| format_err!("Interaction missing member permissions"))?;
 
-    let mut type_map = ctx.data.write().await;
-    let event_manager = type_map.get_mut::<EventManager>().unwrap();
-    let check_result = match get_event_from_str(event_manager, &event_id) {
+    let event_manager = ctx.get_event_manager().await;
+    let check_result = match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             // First we need to check that the member issuing the command is either the creator or an admin.
             if member.user.id == event.creator.id || perms.administrator() {

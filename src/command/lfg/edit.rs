@@ -1,7 +1,7 @@
 use super::{ask_for_description, edit_event_from_str, get_event_from_str, opts};
 use crate::{
     command::{CommandHandler, OptionType},
-    event::{Event, EventManager},
+    event::Event,
     time::parse_datetime,
     util::*,
 };
@@ -167,26 +167,22 @@ async fn lfg_edit(
         .as_ref()
         .ok_or_else(|| format_err!("Interaction missing member permissions"))?;
 
-    // Check permissions upfront, before potentially asking for a new description, but make sure to
-    // drop the lock guard before asking.
-    {
-        let type_map = ctx.data.read().await;
-        let event_manager = type_map.get::<EventManager>().unwrap();
-        let err_msg = match get_event_from_str(event_manager, &event_id) {
-            Ok(event) => {
-                // First we need to check that the member issuing the command is either the creator or an admin.
-                if member.user.id == event.creator.id || perms.administrator() {
-                    None
-                } else {
-                    Some("Only the event creator or an admin can edit an event".to_owned())
-                }
+    // Check permissions upfront, before potentially asking for a new description.
+    let event_manager = ctx.get_event_manager().await;
+    let err_msg = match get_event_from_str(&event_manager, &event_id).await {
+        Ok(event) => {
+            // First we need to check that the member issuing the command is either the creator or an admin.
+            if member.user.id == event.creator.id || perms.administrator() {
+                None
+            } else {
+                Some("Only the event creator or an admin can edit an event".to_owned())
             }
-            Err(msg) => Some(msg),
-        };
-        if let Some(err_msg) = err_msg {
-            interaction.create_response(ctx, err_msg, true).await?;
-            return Ok(());
         }
+        Err(msg) => Some(msg),
+    };
+    if let Some(err_msg) = err_msg {
+        interaction.create_response(ctx, err_msg, true).await?;
+        return Ok(());
     }
 
     let mut edit = EditType::from_option(options, option_name)?;
@@ -208,9 +204,7 @@ async fn lfg_edit(
         _ => {}
     }
 
-    let mut type_map = ctx.data.write().await;
-    let event_manager = type_map.get_mut::<EventManager>().unwrap();
-    let edit_result = edit_event_from_str(event_manager, &event_id, |event| {
+    let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         edit.apply_edit(event);
         format!("Event **{}** updated!", event.id)
     })

@@ -1,7 +1,7 @@
 use super::{edit_event_from_str, get_event_from_str, opts};
 use crate::{
     command::OptionType,
-    event::{EventEmbedMessage, EventManager, JoinKind},
+    event::{EventEmbedMessage, JoinKind},
     util::*,
 };
 use anyhow::{format_err, Context as _, Result};
@@ -106,9 +106,8 @@ pub async fn join(
         "you".to_owned()
     };
 
-    let mut type_map = ctx.data.write().await;
-    let event_manager = type_map.get_mut::<EventManager>().unwrap();
-    let edit_result = edit_event_from_str(event_manager, &event_id, |event| {
+    let event_manager = ctx.get_event_manager().await;
+    let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         match event.join(&target_user, kind) {
             Ok(()) => format!(
                 "Added {} to the {} event at {} as **{}**!",
@@ -143,9 +142,8 @@ pub async fn join(
 
     // If the command's issuer was adding someone else to an event, notify the added user over DM.
     if command_user != target_user {
-        let type_map = type_map.downgrade();
-        let event_manager = type_map.get::<EventManager>().unwrap();
-        let event = get_event_from_str(event_manager, &event_id)
+        let event = get_event_from_str(&event_manager, &event_id)
+            .await
             .map_err(|_| format_err!("Unable to get just-joined event to send notification DM"))?;
 
         let content = MessageBuilder::new()
