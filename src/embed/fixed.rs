@@ -15,7 +15,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct EmbedMessages {
     messages: Arc<RwLock<HashMap<EventId, Vec<EventEmbedMessage>>>>,
 }

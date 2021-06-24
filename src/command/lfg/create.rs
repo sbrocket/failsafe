@@ -110,7 +110,7 @@ async fn lfg_create(
     debug!("Got event description: {:?}", description);
 
     // Create the event!
-    let event_manager = ctx.get_event_manager(&interaction).await;
+    let event_manager = ctx.get_event_manager(&interaction).await?;
     let event = match event_manager
         .create_event(&user, activity, datetime, description)
         .await

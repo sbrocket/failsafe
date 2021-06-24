@@ -41,7 +41,7 @@ pub async fn leave(
     event_id: impl AsRef<str>,
     user: &User,
 ) -> Result<()> {
-    let event_manager = ctx.get_event_manager(&interaction).await;
+    let event_manager = ctx.get_event_manager(&interaction).await?;
     let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         match event.leave(&user) {
             Ok(()) => format!(

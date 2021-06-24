@@ -1,12 +1,24 @@
-use crate::{event::EventManager, store::PersistentStoreBuilder};
-use serenity::{model::id::GuildId, prelude::*, CacheAndHttp};
+use crate::{command::CommandManager, event::EventManager, store::PersistentStoreBuilder};
+use anyhow::{format_err, Context as _, Result};
+use derivative::Derivative;
+use itertools::Itertools;
+use serenity::{
+    model::{id::GuildId, interactions::Interaction},
+    prelude::*,
+    CacheAndHttp,
+};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+use tracing::{error, info};
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct GuildManager {
     store_builder: PersistentStoreBuilder,
+    #[derivative(Debug = "ignore")]
     http: Arc<CacheAndHttp>,
     event_managers: RwLock<HashMap<GuildId, Arc<EventManager>>>,
+    command_manager: CommandManager,
 }
 
 impl GuildManager {
@@ -15,43 +27,83 @@ impl GuildManager {
             store_builder,
             http,
             event_managers: Default::default(),
+            command_manager: CommandManager::new(),
         }
     }
 
-    pub async fn get_event_manager(&self, guild_id: GuildId) -> Arc<EventManager> {
-        // Try the quick, read-lock only path first.
-        {
-            let managers = self.event_managers.read().await;
-            if let Some(mgr) = managers.get(&guild_id) {
-                return mgr.clone();
+    pub async fn add_guilds(&self, guild_ids: Vec<GuildId>) -> Result<()> {
+        let mut managers = self.event_managers.write().await;
+
+        let mut errors = Vec::new();
+        for guild_id in guild_ids {
+            // This is expected; existing guild IDs will be passed in each time.
+            if managers.contains_key(&guild_id) {
+                continue;
+            }
+
+            info!("Added to guild {}", guild_id);
+            match self.add_guild(guild_id).await {
+                Ok(mgr) => {
+                    managers.insert(guild_id, Arc::new(mgr));
+                }
+                Err(err) => errors.push(err),
             }
         }
 
-        // Slower path, need to create EventManager for new guild.
-        let mut managers = self.event_managers.write().await;
-        // Check whether the manager was created while we were grabbing the write lock.
-        if let Some(mgr) = managers.get(&guild_id) {
-            return mgr.clone();
+        if !errors.is_empty() {
+            return Err(format_err!(
+                "Errors occurred adding guilds: {}",
+                errors.iter().map(ToString::to_string).join(", ")
+            ));
         }
+        Ok(())
+    }
 
-        // Create a new EventManager.
-        let event_manager = Arc::new(
-            EventManager::new(
-                &self
-                    .store_builder
-                    .new_scoped(guild_id.as_u64().to_string())
-                    .await
-                    .expect("Failed to create guild-scoped store"),
-                self.http.clone(),
-            )
+    async fn add_guild(&self, guild_id: GuildId) -> Result<EventManager> {
+        let event_manager = EventManager::new(
+            self.store_builder
+                .new_scoped(guild_id.as_u64().to_string())
+                .await
+                .with_context(|| format!("Failed to create guild {} store", guild_id))?,
+            self.http.clone(),
+        )
+        .await
+        .with_context(|| format!("Failed to create EventManager for guild {}", guild_id))?;
+
+        self.command_manager
+            .add_guild(&self.http.http, &guild_id)
+            .await?;
+        Ok(event_manager)
+    }
+
+    pub async fn removed_from_guild(&self, guild_id: GuildId) {
+        let mut managers = self.event_managers.write().await;
+        info!("Removed from guild {}", guild_id);
+        match managers.remove(&guild_id) {
+            Some(mgr) => mgr.removed_from_guild(),
+            None => error!("No EventManager exists for removed guild {}", guild_id),
+        }
+    }
+
+    pub async fn get_event_manager(&self, guild_id: GuildId) -> Result<Arc<EventManager>> {
+        let managers = self.event_managers.read().await;
+        if let Some(mgr) = managers.get(&guild_id) {
+            return Ok(mgr.clone());
+        }
+        Err(format_err!("No EventManager exists for guild {}", guild_id))
+    }
+
+    pub async fn dispatch_interaction(
+        &self,
+        ctx: &Context,
+        interaction: Interaction,
+    ) -> Result<()> {
+        self.command_manager
+            .dispatch_interaction(ctx, interaction)
             .await
-            .expect("Failed to create new guild EventManager"),
-        );
-        managers.insert(guild_id, event_manager.clone());
-        event_manager
     }
 }
 
 impl TypeMapKey for GuildManager {
-    type Value = GuildManager;
+    type Value = Arc<GuildManager>;
 }

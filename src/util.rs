@@ -77,7 +77,7 @@ pub trait OptionsExt {
 
 #[async_trait]
 pub trait ContextExt {
-    async fn get_event_manager(&self, interaction: &Interaction) -> Arc<EventManager>;
+    async fn get_event_manager(&self, interaction: &Interaction) -> Result<Arc<EventManager>>;
 }
 
 #[async_trait]
@@ -220,7 +220,7 @@ impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
 
 #[async_trait]
 impl ContextExt for Context {
-    async fn get_event_manager(&self, interaction: &Interaction) -> Arc<EventManager> {
+    async fn get_event_manager(&self, interaction: &Interaction) -> Result<Arc<EventManager>> {
         let type_map = self.data.read().await;
         let guild_manager = type_map
             .get::<GuildManager>()

@@ -22,9 +22,13 @@ use std::{
     convert::TryFrom,
     iter::successors,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::sync::RwLock;
+use tracing::error;
 
 pub use crate::embed::EventEmbedMessage;
 
@@ -359,6 +363,7 @@ type EventsCollection = BTreeMap<EventId, Arc<Event>>;
 
 const STORE_NAME: &str = "events.json";
 
+#[derive(Debug)]
 struct EventManagerState {
     events: EventsCollection,
     next_id: HashMap<Activity, u8>,
@@ -405,27 +410,32 @@ impl EventManagerState {
 }
 
 /// Manages a single server's worth of events.
+#[derive(Debug)]
 pub struct EventManager {
+    store_builder: PersistentStoreBuilder,
     store: PersistentStore<EventsCollection>,
     state: RwLock<EventManagerState>,
+    removed_from_guild: AtomicBool,
 }
 
 impl EventManager {
     pub async fn new(
-        store_builder: &PersistentStoreBuilder,
+        store_builder: PersistentStoreBuilder,
         http: Arc<CacheAndHttp>,
     ) -> Result<Self> {
         let store = store_builder.build(STORE_NAME).await?;
         let events: EventsCollection = store.load().await?;
-        let embed_manager = Some(EmbedManager::new(store_builder, http, events.values()).await?);
+        let embed_manager = Some(EmbedManager::new(&store_builder, http, events.values()).await?);
 
         Ok(EventManager {
+            store_builder,
             store,
             state: RwLock::new(EventManagerState {
                 events,
                 next_id: Default::default(),
                 embed_manager,
             }),
+            removed_from_guild: Default::default(),
         })
     }
 
@@ -433,13 +443,21 @@ impl EventManager {
     #[cfg(test)]
     pub async fn default() -> Self {
         let tempdir = tempdir::TempDir::new("EventManager").expect("Failed to create tempdir");
-        let builder = PersistentStoreBuilder::new(tempdir.into_path())
+        let store_builder = PersistentStoreBuilder::new(tempdir.into_path())
             .await
             .expect("Failed to create PersistentStoreBuilder");
+        let store = store_builder.build(STORE_NAME).await.unwrap();
         EventManager {
-            store: builder.build(STORE_NAME).await.unwrap(),
+            store_builder,
+            store,
             state: Default::default(),
+            removed_from_guild: Default::default(),
         }
+    }
+
+    // Bot was removed from the guild for this EventManager, delete state.
+    pub fn removed_from_guild(&self) {
+        self.removed_from_guild.store(true, Ordering::Relaxed)
     }
 
     pub async fn create_event(
@@ -563,6 +581,19 @@ impl EventManager {
     pub async fn next_id(&self, activity: Activity) -> Result<EventId> {
         let mut state = self.state.write().await;
         state.next_id(activity)
+    }
+}
+
+impl Drop for EventManager {
+    fn drop(&mut self) {
+        if self.removed_from_guild.load(Ordering::Relaxed) {
+            let store_builder = self.store_builder.clone();
+            tokio::spawn(async move {
+                if let Err(err) = store_builder.delete().await {
+                    error!("Failed to delete guild data after removal: {:?}", err);
+                }
+            });
+        }
     }
 }
 

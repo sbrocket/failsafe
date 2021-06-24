@@ -4,6 +4,7 @@ use crate::{
     store::{PersistentStore, PersistentStoreBuilder},
 };
 use anyhow::{Context as _, Result};
+use derivative::Derivative;
 use futures::prelude::*;
 use serenity::{
     model::{channel::Message, id::ChannelId},
@@ -75,11 +76,14 @@ const EMBED_ACTION_BUFFER_SIZE: usize = 20;
 
 // TODO: Use a MessageCollector to collect messages in the event channels that aren't from the bot
 // and delete them.
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct EmbedManager {
     /// Configuration data for event channels, i.e. channels that events are automatically posted to
     /// based on a filter.
     event_channels: Vec<EventChannel>,
 
+    #[derivative(Debug = "ignore")]
     http: Arc<CacheAndHttp>,
     action_send: mpsc::Sender<EmbedAction>,
 
@@ -176,8 +180,11 @@ async fn send_log_on_backpressure<T>(send: &mpsc::Sender<T>, value: T) {
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct EventChannel {
     channel: ChannelId,
+    #[derivative(Debug = "ignore")]
     filter: Box<dyn FnMut(&Event) -> bool + Send + Sync + 'static>,
     // Note that this relies on Event's Ord implementation that orders by event datetime.
     events: BTreeSet<Arc<Event>>,

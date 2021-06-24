@@ -27,7 +27,7 @@ async fn lfg_show(
         None => Err(format_err!("Missing required event_id value")),
     }?;
 
-    let event_manager = ctx.get_event_manager(&interaction).await;
+    let event_manager = ctx.get_event_manager(&interaction).await?;
     match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             interaction

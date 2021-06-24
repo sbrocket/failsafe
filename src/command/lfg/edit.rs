@@ -168,7 +168,7 @@ async fn lfg_edit(
         .ok_or_else(|| format_err!("Interaction missing member permissions"))?;
 
     // Check permissions upfront, before potentially asking for a new description.
-    let event_manager = ctx.get_event_manager(&interaction).await;
+    let event_manager = ctx.get_event_manager(&interaction).await?;
     let err_msg = match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             // First we need to check that the member issuing the command is either the creator or an admin.

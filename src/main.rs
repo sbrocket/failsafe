@@ -1,12 +1,16 @@
-use command::CommandManager;
 use guild::GuildManager;
 use serenity::{
     async_trait,
-    model::{gateway::Ready, id::GuildId, interactions::Interaction},
+    model::{
+        gateway::Ready,
+        guild::{Guild, GuildUnavailable},
+        id::GuildId,
+        interactions::Interaction,
+    },
     prelude::*,
 };
+use std::sync::Arc;
 use store::PersistentStoreBuilder;
-use tokio::sync::OnceCell;
 use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -22,9 +26,7 @@ mod time;
 mod util;
 
 #[derive(Default)]
-struct Handler {
-    command_manager: OnceCell<CommandManager>,
-}
+struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -33,32 +35,39 @@ impl EventHandler for Handler {
         debug!("Ready data: {:?}", ready);
     }
 
+    // This is sent in response to the "GuildCreate" event, but also indicates that the cache is
+    // ready for use with the given GuildIds.
     async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
         debug!("Cache ready! Guilds = {:?}", guilds);
 
-        assert!(guilds.len() == 1, "Expected bot to be in a single guild");
-        let guild = guilds.first().unwrap();
+        let typemap = ctx.data.read().await;
+        let guild_manager = typemap
+            .get::<GuildManager>()
+            .expect("GuildManager uninitialized");
+        if let Err(err) = guild_manager.add_guilds(guilds).await {
+            error!("Error adding new guilds: {:?}", err);
+        }
+    }
 
-        // TODO: Unclear whether this should be initialized in ready or cache_ready or if it
-        // matters.
-        self.command_manager
-            .get_or_try_init(|| CommandManager::new(&ctx, guild))
-            .await
-            .expect("Failed to create CommandManager");
+    async fn guild_delete(&self, ctx: Context, guild: GuildUnavailable, _full: Option<Guild>) {
+        // If this is true, the guild just went offline. Otherwise the bot was removed.
+        if guild.unavailable {
+            return;
+        }
+
+        let typemap = ctx.data.read().await;
+        let guild_manager = typemap
+            .get::<GuildManager>()
+            .expect("GuildManager uninitialized");
+        guild_manager.removed_from_guild(guild.id).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        let command_manager = match self.command_manager.get() {
-            Some(mgr) => mgr,
-            None => {
-                error!("Interaction created before CommandManager created!");
-                return;
-            }
-        };
-        if let Err(err) = command_manager
-            .dispatch_interaction(&ctx, interaction)
-            .await
-        {
+        let typemap = ctx.data.read().await;
+        let guild_manager = typemap
+            .get::<GuildManager>()
+            .expect("GuildManager uninitialized");
+        if let Err(err) = guild_manager.dispatch_interaction(&ctx, interaction).await {
             error!("Error dispatching interaction: {:?}", err);
         }
     }
@@ -96,7 +105,7 @@ async fn main() {
 
     {
         let mut typemap = client.data.write().await;
-        typemap.insert::<GuildManager>(guild_manager);
+        typemap.insert::<GuildManager>(Arc::new(guild_manager));
     }
 
     client.start().await.expect("Client error");

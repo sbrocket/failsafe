@@ -22,7 +22,7 @@ async fn open_read_append(path: impl AsRef<Path>) -> Result<File> {
         .await?)
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PersistentStoreBuilder {
     store_dir: PathBuf,
 }
@@ -32,32 +32,29 @@ impl PersistentStoreBuilder {
     /// directory.
     pub async fn new(dir: impl Into<PathBuf>) -> Result<Self> {
         let store_dir = dir.into();
-        if !fs::metadata(&store_dir)
-            .await
-            .with_context(|| format!("Dir check failed, does it exist?: {}", store_dir.display()))?
-            .is_dir()
-        {
-            return Err(format_err!("Not a directory: {}", store_dir.display()));
-        }
-        Ok(PersistentStoreBuilder { store_dir })
-    }
-
-    // Create a new PersistentStoreBuilder for the given subdirectory.
-    pub async fn new_scoped(&self, dir: impl AsRef<Path>) -> Result<Self> {
-        let path = self.store_dir.join(dir.as_ref());
-        if fs::create_dir(path.clone()).await.is_err() {
-            if !fs::metadata(&path)
+        if fs::create_dir(&store_dir).await.is_err() {
+            if !fs::metadata(&store_dir)
                 .await
-                .with_context(|| format!("Failed to get dir metadata: {}", path.display()))?
+                .with_context(|| format!("Failed to get dir metadata: {}", store_dir.display()))?
                 .is_dir()
             {
                 return Err(format_err!(
                     "File already exists, can't create directory: {}",
-                    path.display()
+                    store_dir.display()
                 ));
             }
         }
-        Ok(PersistentStoreBuilder { store_dir: path })
+        Ok(PersistentStoreBuilder { store_dir })
+    }
+
+    /// Create a new PersistentStoreBuilder for the given subdirectory.
+    pub async fn new_scoped(&self, dir: impl AsRef<Path>) -> Result<Self> {
+        Self::new(self.store_dir.join(dir.as_ref())).await
+    }
+
+    /// Delete the directory that this PersistentStoreBuilder represents, along with all contents.
+    pub async fn delete(self) -> Result<()> {
+        Ok(fs::remove_dir_all(&self.store_dir).await?)
     }
 
     pub async fn build<T, P: AsRef<Path>>(&self, name: P) -> Result<PersistentStore<T>> {
@@ -79,6 +76,7 @@ impl PersistentStoreBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct PersistentStore<T> {
     path: PathBuf,
     file: Mutex<File>,

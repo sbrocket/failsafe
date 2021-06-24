@@ -1,15 +1,15 @@
-use anyhow::{ensure, format_err, Result};
+use anyhow::{ensure, format_err, Context as _, Result};
 use futures::future::BoxFuture;
 use lazy_static::lazy_static;
 use serenity::{
     builder::{CreateApplicationCommand, CreateApplicationCommandOption},
     client::Context,
+    http::Http,
     model::{
         id::GuildId,
         interactions::{
-            ApplicationCommand, ApplicationCommandInteractionData,
-            ApplicationCommandInteractionDataOption, ApplicationCommandOptionType, Interaction,
-            InteractionData,
+            ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
+            ApplicationCommandOptionType, Interaction, InteractionData,
         },
     },
 };
@@ -93,27 +93,28 @@ lazy_static! {
 
 /// Manages the bot's slash commands, handling creating the commands on startup and dispatching
 /// interactions as they're received.
-pub struct CommandManager {
-    _commands: Vec<ApplicationCommand>,
-}
+#[derive(Debug)]
+pub struct CommandManager;
 
 impl CommandManager {
-    /// Create a new CommandManager, registering all known commands with Discord.
-    /// TODO: For now this creates guild commands (under the given GuildId) instead of global
-    /// commands since the former update immediately but the latter are cached for an hour.
-    pub async fn new(ctx: &Context, guild: &GuildId) -> Result<CommandManager> {
+    pub fn new() -> CommandManager {
+        Self
+    }
+
+    /// Set up a newly ready GuildId, creating guild application commands as needed.
+    pub async fn add_guild(&self, http: impl AsRef<Http>, guild: &GuildId) -> Result<()> {
         // There's a rate limit on creating commands (200 per day per guild) that could get hit if
         // restarting the bot frequently, unclear if replacing/updating commands counts against that
         // limit.
-        let commands = guild
-            .set_application_commands(&ctx, |commands| {
+        let http = http.as_ref();
+        guild
+            .set_application_commands(http, |commands| {
                 let app_commands = COMMANDS.iter().map(|command| command.build()).collect();
                 commands.set_application_commands(app_commands)
             })
-            .await?;
-        Ok(Self {
-            _commands: commands,
-        })
+            .await
+            .with_context(|| format!("Failed to set commands for guild {}", guild))?;
+        Ok(())
     }
 
     /// Dispatch the given interaction to the appropriate command.
