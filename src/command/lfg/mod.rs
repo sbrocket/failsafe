@@ -18,6 +18,7 @@ mod create;
 mod delete;
 mod edit;
 mod join;
+mod kick;
 mod leave;
 mod show;
 
@@ -32,6 +33,7 @@ define_command_group!(
         delete::LfgDelete,
         edit::LfgEdit,
         join::LfgJoin,
+        kick::LfgKick,
         leave::LfgLeave,
         show::LfgShow,
     ]
