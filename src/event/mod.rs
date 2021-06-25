@@ -331,7 +331,7 @@ impl Event {
             .pad_using(1, |_| "None")
             .join(", ");
         embed
-            .field("Extra Alts", alt_names, true)
+            .field("Alternates", alt_names, true)
             .field("Maybe", maybe_names, true);
 
         embed
