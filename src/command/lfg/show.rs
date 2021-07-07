@@ -4,7 +4,9 @@ use anyhow::{format_err, Result};
 use serde_json::Value;
 use serenity::{
     client::Context,
-    model::interactions::{ApplicationCommandInteractionDataOption, Interaction},
+    model::interactions::application_command::{
+        ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+    },
 };
 
 define_leaf_command!(
@@ -18,7 +20,7 @@ define_leaf_command!(
 #[command_attr::hook]
 async fn lfg_show(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
     let event_id = match options.get_value("event_id")? {
@@ -27,7 +29,7 @@ async fn lfg_show(
         None => Err(format_err!("Missing required event_id value")),
     }?;
 
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             interaction

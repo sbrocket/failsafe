@@ -8,8 +8,11 @@ use serenity::{
     http::Http,
     model::{
         interactions::{
-            ApplicationCommandInteractionDataOption,
-            ApplicationCommandInteractionDataOptionValue as OptionValue, Interaction,
+            application_command::{
+                ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+                ApplicationCommandInteractionDataOptionValue as OptionValue,
+            },
+            message_component::MessageComponentInteraction,
         },
         prelude::*,
     },
@@ -23,8 +26,14 @@ const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
     InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
 
 #[async_trait]
-pub trait InteractionExt {
-    fn get_user(&self) -> Result<&User>;
+pub trait InteractionExt: Send + Sync {
+    const KIND: InteractionType;
+
+    fn kind(&self) -> InteractionType {
+        Self::KIND
+    }
+
+    fn guild_id(&self) -> Option<GuildId>;
 
     async fn create_response<'a>(
         &'a self,
@@ -77,118 +86,128 @@ pub trait OptionsExt {
 
 #[async_trait]
 pub trait ContextExt {
-    async fn get_event_manager(&self, interaction: &Interaction) -> Result<Arc<EventManager>>;
+    async fn get_event_manager<I: InteractionExt>(
+        &self,
+        interaction: &I,
+    ) -> Result<Arc<EventManager>>;
 }
 
-#[async_trait]
-impl InteractionExt for Interaction {
-    fn get_user(&self) -> Result<&User> {
-        self.member
-            .as_ref()
-            .map(|m| &m.user)
-            .or(self.user.as_ref())
-            .ok_or(format_err!("Interaction from no user?! {:?}", self))
-    }
+macro_rules! impl_interaction_ext {
+    ($ty:ty, $kind:ident) => {
+        #[async_trait]
+        impl InteractionExt for $ty {
+            const KIND: InteractionType = InteractionType::$kind;
 
-    async fn create_response<'a>(
-        &'a self,
-        http: impl AsRef<Http> + Send + Sync + 'a,
-        content: impl ToString + Send + Sync + 'a,
-        ephemeral: bool,
-    ) -> serenity::Result<()> {
-        let http = http.as_ref();
-        self.create_interaction_response(http, |resp| {
-            resp.interaction_response_data(|msg| {
-                if ephemeral {
-                    msg.flags(EPHEMERAL_FLAG);
-                }
-                msg.content(content.to_string())
-            })
-        })
-        .await
-    }
-
-    async fn create_embed_response<'a>(
-        &'a self,
-        http: impl AsRef<Http> + Send + Sync + 'a,
-        content: impl ToString + Send + Sync + 'a,
-        embed: CreateEmbed,
-        components: CreateComponents,
-        ephemeral: bool,
-    ) -> serenity::Result<()> {
-        let http = http.as_ref();
-        self.create_interaction_response(http, |resp| {
-            resp.interaction_response_data(|msg| {
-                if ephemeral {
-                    msg.flags(EPHEMERAL_FLAG);
-                }
-                msg.content(content.to_string())
-                    .add_embed(embed)
-                    .components(|c| {
-                        *c = components;
-                        c
-                    })
-            })
-        })
-        .await
-    }
-
-    async fn edit_response<'a>(
-        &'a self,
-        http: impl AsRef<Http> + Send + Sync + 'a,
-        content: impl ToString + Send + Sync + 'a,
-    ) -> serenity::Result<Message> {
-        let http = http.as_ref();
-        self.edit_original_interaction_response(http, |resp| resp.content(content.to_string()))
-            .await
-    }
-
-    async fn edit_embed_response<'a>(
-        &'a self,
-        http: impl AsRef<Http> + Send + Sync + 'a,
-        content: impl ToString + Send + Sync + 'a,
-        embed: CreateEmbed,
-        components: CreateComponents,
-    ) -> serenity::Result<Message> {
-        let http = http.as_ref();
-        self.edit_original_interaction_response(http, |resp| {
-            resp.content(content.to_string())
-                .add_embed(embed)
-                .components(|c| {
-                    *c = components;
-                    c
-                })
-        })
-        .await
-    }
-
-    async fn create_ack_response<'a>(
-        &'a self,
-        http: impl AsRef<Http> + Send + Sync + 'a,
-    ) -> serenity::Result<()> {
-        let http = http.as_ref();
-        self.create_interaction_response(http, |resp| {
-            resp.kind(InteractionResponseType::DeferredUpdateMessage)
-        })
-        .await
-    }
-
-    async fn create_followup<'a>(
-        &'a self,
-        http: impl AsRef<Http> + Send + Sync + 'a,
-        content: impl ToString + Send + Sync + 'a,
-        ephemeral: bool,
-    ) -> serenity::Result<Message> {
-        let http = http.as_ref();
-        self.create_followup_message(http, |msg| {
-            if ephemeral {
-                msg.flags(EPHEMERAL_FLAG);
+            fn guild_id(&self) -> Option<GuildId> {
+                self.guild_id
             }
-            msg.content(content.to_string())
-        })
-        .await
-    }
+
+            async fn create_response<'a>(
+                &'a self,
+                http: impl AsRef<Http> + Send + Sync + 'a,
+                content: impl ToString + Send + Sync + 'a,
+                ephemeral: bool,
+            ) -> serenity::Result<()> {
+                let http = http.as_ref();
+                self.create_interaction_response(http, |resp| {
+                    resp.interaction_response_data(|msg| {
+                        if ephemeral {
+                            msg.flags(EPHEMERAL_FLAG);
+                        }
+                        msg.content(content.to_string())
+                    })
+                })
+                .await
+            }
+
+            async fn create_embed_response<'a>(
+                &'a self,
+                http: impl AsRef<Http> + Send + Sync + 'a,
+                content: impl ToString + Send + Sync + 'a,
+                embed: CreateEmbed,
+                components: CreateComponents,
+                ephemeral: bool,
+            ) -> serenity::Result<()> {
+                let http = http.as_ref();
+                self.create_interaction_response(http, |resp| {
+                    resp.interaction_response_data(|msg| {
+                        if ephemeral {
+                            msg.flags(EPHEMERAL_FLAG);
+                        }
+                        msg.content(content.to_string())
+                            .add_embed(embed)
+                            .components(|c| {
+                                *c = components;
+                                c
+                            })
+                    })
+                })
+                .await
+            }
+
+            async fn edit_response<'a>(
+                &'a self,
+                http: impl AsRef<Http> + Send + Sync + 'a,
+                content: impl ToString + Send + Sync + 'a,
+            ) -> serenity::Result<Message> {
+                let http = http.as_ref();
+                self.edit_original_interaction_response(http, |resp| {
+                    resp.content(content.to_string())
+                })
+                .await
+            }
+
+            async fn edit_embed_response<'a>(
+                &'a self,
+                http: impl AsRef<Http> + Send + Sync + 'a,
+                content: impl ToString + Send + Sync + 'a,
+                embed: CreateEmbed,
+                components: CreateComponents,
+            ) -> serenity::Result<Message> {
+                let http = http.as_ref();
+                self.edit_original_interaction_response(http, |resp| {
+                    resp.content(content.to_string())
+                        .add_embed(embed)
+                        .components(|c| {
+                            *c = components;
+                            c
+                        })
+                })
+                .await
+            }
+
+            async fn create_ack_response<'a>(
+                &'a self,
+                http: impl AsRef<Http> + Send + Sync + 'a,
+            ) -> serenity::Result<()> {
+                let http = http.as_ref();
+                self.create_interaction_response(http, |resp| {
+                    resp.kind(InteractionResponseType::DeferredUpdateMessage)
+                })
+                .await
+            }
+
+            async fn create_followup<'a>(
+                &'a self,
+                http: impl AsRef<Http> + Send + Sync + 'a,
+                content: impl ToString + Send + Sync + 'a,
+                ephemeral: bool,
+            ) -> serenity::Result<Message> {
+                let http = http.as_ref();
+                self.create_followup_message(http, |msg| {
+                    if ephemeral {
+                        msg.flags(EPHEMERAL_FLAG);
+                    }
+                    msg.content(content.to_string())
+                })
+                .await
+            }
+        }
+    };
 }
+
+impl_interaction_ext!(ApplicationCommandInteraction, ApplicationCommand);
+impl_interaction_ext!(MessageComponentInteraction, MessageComponent);
 
 impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
     fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>> {
@@ -220,14 +239,17 @@ impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
 
 #[async_trait]
 impl ContextExt for Context {
-    async fn get_event_manager(&self, interaction: &Interaction) -> Result<Arc<EventManager>> {
+    async fn get_event_manager<I: InteractionExt>(
+        &self,
+        interaction: &I,
+    ) -> Result<Arc<EventManager>> {
         let type_map = self.data.read().await;
         let guild_manager = type_map
             .get::<GuildManager>()
             .expect("No GuildManager in TypeMap");
 
         let guild_id = interaction
-            .guild_id
+            .guild_id()
             .expect("Called with non-guild command Interaction");
         guild_manager.get_event_manager(guild_id).await
     }

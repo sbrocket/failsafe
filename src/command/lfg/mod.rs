@@ -5,7 +5,10 @@ use crate::{
 use anyhow::{format_err, Result};
 use serenity::{
     client::Context,
-    model::interactions::{Interaction, MessageComponent},
+    model::interactions::{
+        application_command::ApplicationCommandInteraction,
+        message_component::MessageComponentInteraction,
+    },
     utils::MessageBuilder,
 };
 use std::time::Duration;
@@ -85,10 +88,10 @@ const LFG_DESCRIPTION_TIMEOUT_SEC: u64 = 60;
 // edit that response or create followups, rather than trying to create it again (which will fail).
 pub async fn ask_for_description(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     query_content: impl ToString,
 ) -> Result<Option<String>> {
-    let user = interaction.get_user()?;
+    let user = &interaction.user;
 
     interaction
         .create_response(&ctx, query_content.to_string(), true)
@@ -119,14 +122,12 @@ pub async fn ask_for_description(
 
 pub async fn handle_component_interaction(
     ctx: &Context,
-    interaction: &Interaction,
-    data: &MessageComponent,
+    interaction: &MessageComponentInteraction,
 ) -> Result<()> {
-    debug!("handling component interaction, id '{}'", data.custom_id);
+    let custom_id = &interaction.data.custom_id;
+    debug!("handling component interaction, id '{}'", custom_id);
 
-    let user = interaction.get_user()?;
-
-    let custom_id = &data.custom_id;
+    let user = &interaction.user;
     let (action, event_id) = custom_id
         .split_once(":")
         .ok_or_else(|| format_err!("Received unexpected component custom_id: {}", custom_id))?;

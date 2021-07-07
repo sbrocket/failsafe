@@ -8,7 +8,7 @@ use serenity::{
     http::Http,
     model::{
         id::{ChannelId, MessageId},
-        interactions::Interaction,
+        interactions::application_command::ApplicationCommandInteraction,
     },
 };
 use std::{collections::HashMap, sync::Arc};
@@ -218,7 +218,7 @@ pub enum EventEmbedMessage {
     // As such, we will skip updating responses older than 15 minutes, and edit the responses to
     // only include the given text at 14 minutes to avoid stale embeds in the user's chat
     // scrollback.
-    EphemeralResponse(Interaction, DateTime<Utc>, String),
+    EphemeralResponse(ApplicationCommandInteraction, DateTime<Utc>, String),
 }
 
 lazy_static! {
@@ -233,11 +233,11 @@ impl EventEmbedMessage {
     fn strip_unneeded_fields(&mut self) {
         match self {
             EventEmbedMessage::EphemeralResponse(interaction, ..) => {
-                interaction.data = None;
+                interaction.data.options.clear();
+                interaction.data.resolved = Default::default();
                 interaction.guild_id = None;
-                interaction.channel_id = None;
                 interaction.member = None;
-                interaction.user = None;
+                interaction.user = Default::default();
             }
             _ => {}
         }

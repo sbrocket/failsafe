@@ -4,7 +4,9 @@ use anyhow::{format_err, Result};
 use serde_json::Value;
 use serenity::{
     client::Context,
-    model::interactions::{ApplicationCommandInteractionDataOption, Interaction},
+    model::interactions::application_command::{
+        ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+    },
 };
 use tracing::error;
 
@@ -19,7 +21,7 @@ define_leaf_command!(
 #[command_attr::hook]
 async fn lfg_delete(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
     let event_id = match options.get_value("event_id")? {
@@ -37,7 +39,7 @@ async fn lfg_delete(
         .as_ref()
         .ok_or_else(|| format_err!("Interaction missing member permissions"))?;
 
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     let check_result = match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             // First we need to check that the member issuing the command is either the creator or an admin.

@@ -11,9 +11,9 @@ use chrono_tz::Tz;
 use serde_json::Value;
 use serenity::{
     client::Context,
-    model::interactions::{
-        ApplicationCommandInteractionDataOption,
-        ApplicationCommandInteractionDataOptionValue as OptionValue, Interaction,
+    model::interactions::application_command::{
+        ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+        ApplicationCommandInteractionDataOptionValue as OptionValue,
     },
 };
 use std::convert::TryFrom;
@@ -30,7 +30,11 @@ macro_rules! define_edit_command {
     ($id:ident, $name:literal, $descr:expr, $handler:ident, options: $opts:tt $(,)?) => {
         paste::paste! {
             const [<$id:snake:upper>]: CommandHandler =
-                |ctx: &Context, interaction: &Interaction, opts: &Vec<ApplicationCommandInteractionDataOption>| {
+                |
+                    ctx: &Context,
+                    interaction: &ApplicationCommandInteraction,
+                    opts: &Vec<ApplicationCommandInteractionDataOption>,
+                | {
                     $handler(ctx, interaction, opts, $name)
                 };
             define_leaf_command!($id, $name, $descr, [<$id:snake:upper>], options: $opts);
@@ -148,7 +152,7 @@ impl EditType {
 #[command_attr::hook]
 async fn lfg_edit(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
     option_name: &str,
 ) -> Result<()> {
@@ -168,7 +172,7 @@ async fn lfg_edit(
         .ok_or_else(|| format_err!("Interaction missing member permissions"))?;
 
     // Check permissions upfront, before potentially asking for a new description.
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     let err_msg = match get_event_from_str(&event_manager, &event_id).await {
         Ok(event) => {
             // First we need to check that the member issuing the command is either the creator or an admin.

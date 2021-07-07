@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
     builder::{CreateActionRow, CreateButton, CreateComponents, CreateEmbed},
-    model::{id::UserId, prelude::*},
+    model::{id::UserId, interactions::message_component::ButtonStyle, prelude::*},
     prelude::TypeMapKey,
     utils::Color,
     CacheAndHttp,

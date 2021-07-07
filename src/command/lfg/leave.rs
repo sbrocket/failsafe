@@ -5,7 +5,9 @@ use serde_json::Value;
 use serenity::{
     client::Context,
     model::{
-        interactions::{ApplicationCommandInteractionDataOption, Interaction},
+        interactions::application_command::{
+            ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+        },
         prelude::*,
     },
 };
@@ -22,10 +24,10 @@ define_leaf_command!(
 #[command_attr::hook]
 async fn lfg_leave(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
-    let user = interaction.get_user()?;
+    let user = &interaction.user;
     let event_id = match options.get_value("event_id")? {
         Some(Value::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
@@ -37,11 +39,11 @@ async fn lfg_leave(
 
 pub async fn leave(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &impl InteractionExt,
     event_id: impl AsRef<str>,
     user: &User,
 ) -> Result<()> {
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         match event.leave(&user) {
             Ok(()) => format!(
@@ -56,7 +58,7 @@ pub async fn leave(
     })
     .await;
 
-    match (edit_result, interaction.kind) {
+    match (edit_result, interaction.kind()) {
         (Err(err), _) => {
             error!("Failed to edit event: {:?}", err);
             let content =

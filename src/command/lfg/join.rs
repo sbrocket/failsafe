@@ -9,9 +9,9 @@ use serde_json::Value;
 use serenity::{
     client::Context,
     model::{
-        interactions::{
-            ApplicationCommandInteractionDataOption,
-            ApplicationCommandInteractionDataOptionValue as OptionValue, Interaction,
+        interactions::application_command::{
+            ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+            ApplicationCommandInteractionDataOptionValue as OptionValue,
         },
         prelude::*,
     },
@@ -55,7 +55,7 @@ define_leaf_command!(
 #[command_attr::hook]
 async fn lfg_join(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
     let event_id = match options.get_value("event_id")? {
@@ -64,7 +64,7 @@ async fn lfg_join(
         None => Err(format_err!("Missing required event_id value")),
     }?;
 
-    let command_user = interaction.get_user()?;
+    let command_user = &interaction.user;
     let target_user = match options.get_resolved("user")? {
         None => Ok(command_user),
         Some(OptionValue::User(user, _)) => Ok(user),
@@ -91,7 +91,7 @@ async fn lfg_join(
 
 pub async fn join(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &impl InteractionExt,
     event_id: impl AsRef<str>,
     command_user: &User,
     target_user: Option<&User>,
@@ -106,7 +106,7 @@ pub async fn join(
         "you".to_owned()
     };
 
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         match event.join(&target_user, kind) {
             Ok(()) => format!(
@@ -121,7 +121,7 @@ pub async fn join(
     })
     .await;
 
-    match (edit_result, interaction.kind) {
+    match (edit_result, interaction.kind()) {
         (Err(err), _) => {
             error!(
                 "Failed to add {} to event {}: {:?}",

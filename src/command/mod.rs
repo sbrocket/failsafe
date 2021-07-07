@@ -8,8 +8,11 @@ use serenity::{
     model::{
         id::GuildId,
         interactions::{
-            ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
-            ApplicationCommandOptionType, Interaction, InteractionData,
+            application_command::{
+                ApplicationCommandInteraction, ApplicationCommandInteractionData,
+                ApplicationCommandInteractionDataOption, ApplicationCommandOptionType,
+            },
+            Interaction,
         },
     },
 };
@@ -38,7 +41,7 @@ pub enum CommandType {
 
 type CommandHandler = for<'fut> fn(
     &'fut Context,
-    &'fut Interaction,
+    &'fut ApplicationCommandInteraction,
     &'fut Vec<ApplicationCommandInteractionDataOption>,
 ) -> BoxFuture<'fut, Result<()>>;
 
@@ -125,23 +128,18 @@ impl CommandManager {
     ) -> Result<()> {
         debug!("Received interaction: {:?}", interaction);
 
-        match interaction.data.as_ref() {
-            Some(InteractionData::ApplicationCommand(data)) => {
+        match interaction {
+            Interaction::ApplicationCommand(interaction) => {
                 // TODO: Parse the options into an easier to consume form.
-                let (cmd_name, leaf, options) = self.find_leaf_command(data)?;
+                let (cmd_name, leaf, options) = self.find_leaf_command(&interaction.data)?;
 
                 debug!("'{}' handling command interaction", cmd_name);
                 (leaf.handler)(ctx, &interaction, options).await
             }
-            Some(InteractionData::MessageComponent(data)) => {
-                lfg::handle_component_interaction(ctx, &interaction, data).await
+            Interaction::MessageComponent(interaction) => {
+                lfg::handle_component_interaction(ctx, &interaction).await
             }
-            _ => {
-                return Err(format_err!(
-                    "Unexpected interaction type: {:?}",
-                    interaction
-                ))
-            }
+            Interaction::Ping(i) => Err(format_err!("Unexpected Ping interaction: {:?}", i)),
         }
     }
 

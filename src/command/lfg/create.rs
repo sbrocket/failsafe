@@ -13,7 +13,9 @@ use paste::paste;
 use serde_json::Value;
 use serenity::{
     client::Context,
-    model::interactions::{ApplicationCommandInteractionDataOption, Interaction},
+    model::interactions::application_command::{
+        ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+    },
 };
 use tracing::{debug, error};
 
@@ -61,12 +63,12 @@ with_activity_types! { define_create_commands }
 #[command_attr::hook]
 async fn lfg_create(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
     let recv_time = Utc::now();
 
-    let user = interaction.get_user()?;
+    let user = &interaction.user;
     let activity = match options.get_value("activity")? {
         Some(Value::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
@@ -110,7 +112,7 @@ async fn lfg_create(
     debug!("Got event description: {:?}", description);
 
     // Create the event!
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     let event = match event_manager
         .create_event(&user, activity, datetime, description)
         .await

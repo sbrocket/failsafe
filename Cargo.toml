@@ -32,7 +32,7 @@ tempdir = "0.3"
 [dependencies.serenity]
 default-features = false
 features = ["builder", "cache", "client", "collector", "gateway", "http", "model", "utils", "rustls_backend", "unstable_discord_api"]
-# Temporarily build from own fork with not-yet-merged PRs applied
+# Temporarily build from current branch until PRs are released in new version
 #version = "0.10.8"
 git = "https://github.com/sbrocket/serenity.git"
-rev = "87b9f04008a322181eae64d7620f57f5244b9c80"
+rev = "e7ba5bf211d20ff3b37613973e9553c5682b0894"

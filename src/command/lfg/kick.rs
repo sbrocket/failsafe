@@ -5,9 +5,9 @@ use serde_json::Value;
 use serenity::{
     client::Context,
     model::{
-        interactions::{
-            ApplicationCommandInteractionDataOption,
-            ApplicationCommandInteractionDataOptionValue as OptionValue, Interaction,
+        interactions::application_command::{
+            ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+            ApplicationCommandInteractionDataOptionValue as OptionValue,
         },
         prelude::*,
     },
@@ -36,7 +36,7 @@ define_leaf_command!(
 #[command_attr::hook]
 async fn lfg_kick(
     ctx: &Context,
-    interaction: &Interaction,
+    interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
     let event_id = match options.get_value("event_id")? {
@@ -69,7 +69,7 @@ async fn lfg_kick(
     }?;
 
     let user_mention = target_user.mention().to_string();
-    let event_manager = ctx.get_event_manager(&interaction).await?;
+    let event_manager = ctx.get_event_manager(interaction).await?;
     let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
         match event.leave(&target_user) {
             Ok(()) => format!(
