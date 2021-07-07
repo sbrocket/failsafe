@@ -85,7 +85,7 @@ impl EmbedMessages {
                 results.into_iter().partition(Result::is_ok);
             let count = successes.len() + failures.len();
             if failures.is_empty() {
-                info!("Successfully updated embeds for event {}", event_id);
+                info!("Successfully updated fixed embeds for event {}", event_id);
             } else if successes.is_empty() {
                 error!(
                     "All ({}) embeds failed to update for event {}",
@@ -151,7 +151,10 @@ impl EmbedMessages {
                 results.into_iter().partition(Result::is_ok);
             let count = successes.len() + failures.len();
             if failures.is_empty() {
-                info!("Successfully delete embed messages for event {}", event_id);
+                info!(
+                    "Successfully deleted fixed embed messages for event {}",
+                    event_id
+                );
             } else if successes.is_empty() {
                 error!(
                     "All ({}) embed messages failed to delete for event {}",
