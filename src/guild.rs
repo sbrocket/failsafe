@@ -53,7 +53,7 @@ impl GuildManager {
         if !errors.is_empty() {
             return Err(format_err!(
                 "Errors occurred adding guilds: {}",
-                errors.iter().map(ToString::to_string).join(", ")
+                errors.iter().map(|e| format!("{:?}", e)).join(", ")
             ));
         }
         Ok(())
