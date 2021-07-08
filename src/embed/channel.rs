@@ -3,7 +3,11 @@ use anyhow::{Context as _, Result};
 use derivative::Derivative;
 use futures::prelude::*;
 use serenity::{
-    model::{channel::Message, id::ChannelId},
+    builder::CreateEmbed,
+    model::{
+        channel::{Message, MessageFlags},
+        id::ChannelId,
+    },
     CacheAndHttp,
 };
 use std::{cmp, collections::BTreeSet, sync::Arc, time::Duration};
@@ -207,10 +211,26 @@ impl ChannelUpdater {
             .iter()
             .zip(self.messages.iter())
             .enumerate()
-            .filter_map(|(idx, (event, _message))| {
-                // TODO: Instead of just updating everything, detect which messages need to be
-                // updated by checking the content of the embed.
-                Some(ChannelUpdate::Update { event, idx })
+            .filter_map(|(idx, (event, message))| {
+                let update = Some(ChannelUpdate::Update { event, idx });
+
+                // Check whether the current message has embeds suppressed or whether the embed
+                // isn't in sync with the correct event state and update if so.
+                if message
+                    .flags
+                    .map_or(false, |f| f.contains(MessageFlags::SUPPRESS_EMBEDS))
+                {
+                    return update;
+                }
+                if message.embeds.len() != 1 {
+                    return update;
+                }
+                let current = CreateEmbed::from(message.embeds[0].clone());
+                let target = event.as_embed();
+                if current.0 != target.0 {
+                    return update;
+                }
+                None
             });
 
         // Only new or delete will yield any elements, not both, but this lets us simply chain the
@@ -246,6 +266,9 @@ impl ChannelUpdater {
                     .expect("Message index OOB, state inconsistent");
                 message
                     .edit(&self.http, |msg| {
+                        // TODO: Switch to suppress_embeds(false) once serenity-rs/serenity#1436
+                        // lands
+                        msg.0.insert("flags", serde_json::json!(0));
                         msg.set_embed(event.as_embed()).components(|c| {
                             *c = event.event_buttons();
                             c
