@@ -44,7 +44,7 @@ impl EventHandler for Handler {
         let guild_manager = typemap
             .get::<GuildManager>()
             .expect("GuildManager uninitialized");
-        if let Err(err) = guild_manager.add_guilds(guilds).await {
+        if let Err(err) = guild_manager.add_guilds(&ctx, guilds).await {
             error!("Error adding new guilds: {:?}", err);
         }
     }
@@ -91,22 +91,18 @@ async fn main() {
         .parse()
         .expect("DISCORD_APP_ID not a valid u64");
 
-    let mut client = Client::builder(&token)
-        .application_id(app_id)
-        .event_handler(Handler::default())
-        .await
-        .expect("Error creating client");
-
     let event_store = std::env::var("PERSISTENT_STORE_DIR").expect("Missing $PERSISTENT_STORE_DIR");
     let store_builder = PersistentStoreBuilder::new(event_store)
         .await
         .expect("Failed to create PersistentStoreBuilder");
-    let guild_manager = GuildManager::new(store_builder, client.cache_and_http.clone());
+    let guild_manager = GuildManager::new(store_builder);
 
-    {
-        let mut typemap = client.data.write().await;
-        typemap.insert::<GuildManager>(Arc::new(guild_manager));
-    }
+    let mut client = Client::builder(&token)
+        .application_id(app_id)
+        .event_handler(Handler::default())
+        .type_map_insert::<GuildManager>(Arc::new(guild_manager))
+        .await
+        .expect("Error creating client");
 
     client.start().await.expect("Client error");
 }

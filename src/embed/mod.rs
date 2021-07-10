@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use derivative::Derivative;
-use serenity::{model::id::ChannelId, CacheAndHttp};
+use serenity::{model::id::ChannelId, prelude::*};
 use std::sync::Arc;
 
 mod channel;
@@ -15,21 +15,21 @@ use channel::{EventChange, EventChannel};
 pub use fixed::EventEmbedMessage;
 
 // TODO: Replace this hardcoded event channel configuration with commands to configure this.
-fn test_event_channels<'a, I>(http: &Arc<CacheAndHttp>, initial_events: I) -> Vec<EventChannel>
+fn test_event_channels<'a, I>(ctx: &Context, initial_events: I) -> Vec<EventChannel>
 where
     I: Iterator<Item = &'a Arc<Event>> + Clone,
 {
     let mut v = Vec::new();
     // #raid-lfg
     v.push(EventChannel::new(
-        http.clone(),
+        ctx.clone(),
         ChannelId(853744114377687090),
         Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Raid),
         initial_events.clone(),
     ));
     // #pve-lfg
     v.push(EventChannel::new(
-        http.clone(),
+        ctx.clone(),
         ChannelId(853744129774452766),
         Box::new(|e: &Event| match e.activity.activity_type() {
             ActivityType::Dungeon
@@ -43,21 +43,21 @@ where
     ));
     // #pvp-lfg
     v.push(EventChannel::new(
-        http.clone(),
+        ctx.clone(),
         ChannelId(853744160926597150),
         Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Crucible),
         initial_events.clone(),
     ));
     // #special-lfg
     v.push(EventChannel::new(
-        http.clone(),
+        ctx.clone(),
         ChannelId(853744175908257813),
         Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Custom),
         initial_events.clone(),
     ));
     // #all-lfg
     v.push(EventChannel::new(
-        http.clone(),
+        ctx.clone(),
         ChannelId(853744186545274880),
         Box::new(|_: &Event| true),
         initial_events,
@@ -72,10 +72,10 @@ const STORE_NAME: &str = "embeds.json";
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct EmbedManager {
-    event_channels: Vec<EventChannel>,
-
     #[derivative(Debug = "ignore")]
-    http: Arc<CacheAndHttp>,
+    ctx: Context,
+
+    event_channels: Vec<EventChannel>,
 
     // Messages that this event's embed has been added to, and which need to be updated when the
     // event is updated.
@@ -87,8 +87,8 @@ pub struct EmbedManager {
 
 impl EmbedManager {
     pub async fn new<'a, I>(
+        ctx: Context,
         store_builder: &PersistentStoreBuilder,
-        http: Arc<CacheAndHttp>,
         initial_events: I,
     ) -> Result<Self>
     where
@@ -97,10 +97,10 @@ impl EmbedManager {
         let store = store_builder.build(STORE_NAME).await?;
         let embed_messages = store.load().await?;
 
-        let event_channels = test_event_channels(&http, initial_events);
+        let event_channels = test_event_channels(&ctx, initial_events);
         Ok(EmbedManager {
+            ctx,
             event_channels,
-            http,
             embed_messages,
             store,
         })
@@ -118,8 +118,7 @@ impl EmbedManager {
             chan.handle_event_change(EventChange::Edited(event.clone()))
                 .await;
         }
-        self.embed_messages
-            .start_updating_embeds(&self.http.http, &event);
+        self.embed_messages.start_updating_embeds(&self.ctx, &event);
     }
 
     pub async fn event_deleted(&mut self, event: Arc<Event>) -> Result<()> {
@@ -128,7 +127,7 @@ impl EmbedManager {
                 .await;
         }
         self.embed_messages
-            .start_deleting_embeds(&self.http.http, &event)
+            .start_deleting_embeds(&self.ctx, &event)
             .await;
         self.store.store(&self.embed_messages).await
     }

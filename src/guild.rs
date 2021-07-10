@@ -5,7 +5,6 @@ use itertools::Itertools;
 use serenity::{
     model::{id::GuildId, interactions::Interaction},
     prelude::*,
-    CacheAndHttp,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -16,22 +15,20 @@ use tracing::{error, info};
 pub struct GuildManager {
     store_builder: PersistentStoreBuilder,
     #[derivative(Debug = "ignore")]
-    http: Arc<CacheAndHttp>,
     event_managers: RwLock<HashMap<GuildId, Arc<EventManager>>>,
     command_manager: CommandManager,
 }
 
 impl GuildManager {
-    pub fn new(store_builder: PersistentStoreBuilder, http: Arc<CacheAndHttp>) -> Self {
+    pub fn new(store_builder: PersistentStoreBuilder) -> Self {
         GuildManager {
             store_builder,
-            http,
             event_managers: Default::default(),
             command_manager: CommandManager::new(),
         }
     }
 
-    pub async fn add_guilds(&self, guild_ids: Vec<GuildId>) -> Result<()> {
+    pub async fn add_guilds(&self, ctx: &Context, guild_ids: Vec<GuildId>) -> Result<()> {
         let mut managers = self.event_managers.write().await;
 
         let mut errors = Vec::new();
@@ -42,7 +39,7 @@ impl GuildManager {
             }
 
             info!("Added to guild {}", guild_id);
-            match self.add_guild(guild_id).await {
+            match self.add_guild(ctx.clone(), guild_id).await {
                 Ok(mgr) => {
                     managers.insert(guild_id, Arc::new(mgr));
                 }
@@ -59,20 +56,19 @@ impl GuildManager {
         Ok(())
     }
 
-    async fn add_guild(&self, guild_id: GuildId) -> Result<EventManager> {
+    async fn add_guild(&self, ctx: Context, guild_id: GuildId) -> Result<EventManager> {
+        let http = ctx.http.clone();
         let event_manager = EventManager::new(
+            ctx,
             self.store_builder
                 .new_scoped(guild_id.as_u64().to_string())
                 .await
                 .with_context(|| format!("Failed to create guild {} store", guild_id))?,
-            self.http.clone(),
         )
         .await
         .with_context(|| format!("Failed to create EventManager for guild {}", guild_id))?;
 
-        self.command_manager
-            .add_guild(&self.http.http, &guild_id)
-            .await?;
+        self.command_manager.add_guild(&http, &guild_id).await?;
         Ok(event_manager)
     }
 

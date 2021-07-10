@@ -35,4 +35,4 @@ features = ["builder", "cache", "client", "collector", "gateway", "http", "model
 # Temporarily build from current branch until PRs are released in new version
 #version = "0.10.8"
 git = "https://github.com/sbrocket/serenity.git"
-rev = "e7ba5bf211d20ff3b37613973e9553c5682b0894"
+branch = "combined-prs"

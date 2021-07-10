@@ -13,9 +13,8 @@ use serde::{Deserialize, Serialize};
 use serenity::{
     builder::{CreateActionRow, CreateButton, CreateComponents, CreateEmbed},
     model::{id::UserId, interactions::message_component::ButtonStyle, prelude::*},
-    prelude::TypeMapKey,
+    prelude::*,
     utils::Color,
-    CacheAndHttp,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -419,13 +418,10 @@ pub struct EventManager {
 }
 
 impl EventManager {
-    pub async fn new(
-        store_builder: PersistentStoreBuilder,
-        http: Arc<CacheAndHttp>,
-    ) -> Result<Self> {
+    pub async fn new(ctx: Context, store_builder: PersistentStoreBuilder) -> Result<Self> {
         let store = store_builder.build(STORE_NAME).await?;
         let events: EventsCollection = store.load().await?;
-        let embed_manager = Some(EmbedManager::new(&store_builder, http, events.values()).await?);
+        let embed_manager = Some(EmbedManager::new(ctx, &store_builder, events.values()).await?);
 
         Ok(EventManager {
             store_builder,

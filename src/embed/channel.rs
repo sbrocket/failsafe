@@ -1,14 +1,16 @@
 use crate::event::Event;
-use anyhow::{Context as _, Result};
+use anyhow::{format_err, Context as _, Result};
 use derivative::Derivative;
 use futures::prelude::*;
 use serenity::{
     builder::CreateEmbed,
+    collector::{EventCollector, EventCollectorBuilder},
     model::{
         channel::{Message, MessageFlags},
+        event::{Event as ModelEvent, EventType},
         id::ChannelId,
     },
-    CacheAndHttp,
+    prelude::*,
 };
 use std::{cmp, collections::BTreeSet, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{self, error::TrySendError};
@@ -34,7 +36,7 @@ pub struct EventChannel {
 
 impl EventChannel {
     pub fn new<'a, F, I>(
-        http: Arc<CacheAndHttp>,
+        ctx: Context,
         channel: ChannelId,
         filter: Box<F>,
         initial_events: I,
@@ -45,23 +47,23 @@ impl EventChannel {
     {
         let events = ChannelEvents::new(filter, initial_events);
         let (send, recv) = mpsc::channel(EVENT_CHANGE_BUFFER_SIZE);
-        tokio::spawn(Self::event_processing_loop(http, channel, recv, events));
+        tokio::spawn(Self::event_processing_loop(ctx, channel, recv, events));
 
         Self { send }
     }
 
     async fn event_processing_loop(
-        http: Arc<CacheAndHttp>,
+        ctx: Context,
         channel: ChannelId,
         mut recv: mpsc::Receiver<EventChange>,
         mut events: ChannelEvents,
-    ) {
+    ) -> ! {
         let mut retry = 0;
         loop {
             // Initialize a new ChannelUpdater. This gets the current messages in the channel
             // and compares them against the given events, updating as necessary to ensure our
             // state is consistent and ready to apply new event changes.
-            let mut updater = match ChannelUpdater::new(http.clone(), channel, &events).await {
+            let mut updater = match ChannelUpdater::new(ctx.clone(), channel, &events).await {
                 Ok(updater) => updater,
                 Err(err) => {
                     error!("Error creating ChannelUpdater, retry {}: {}", retry, err);
@@ -75,16 +77,36 @@ impl EventChannel {
             };
             retry = 0;
 
-            // Process new event updates as they occur.
-            'events: while let Some(change) = recv.recv().await {
-                let updates = events.apply_event_change(change);
-                for update in updates {
-                    debug!("Applying event channel update: {:?}", update);
-                    if let Err(err) = updater.apply_update(update).await {
-                        error!("Error processing channel update: {:?}", err);
-                        break 'events;
+            'restart_updater: loop {
+                tokio::select! {
+                    // Let ChannelUpdater handle Discord message events as they come in. This will only
+                    // yield a value if an error occurs while handling events, otherwise the select
+                    // polling will keep handling message events.
+                    updater_event = updater.next_updater_event() => {
+                        match updater_event {
+                            Ok(updater_event) => if let Err(err) = updater.process_updater_event(updater_event, &events).await {
+                                error!("Error processing ChannelUpdaterEvent: {:?}", err);
+                                break 'restart_updater;
+                            }
+                            Err(err) => {
+                                error!("Error getting next ChannelUpdaterEvent: {:?}", err);
+                                break 'restart_updater;
+                            }
+                        }
                     }
-                }
+
+                    // Process new event updates as they occur.
+                    Some(change) = recv.recv() => {
+                        let updates = events.apply_event_change(change);
+                        for update in updates {
+                            debug!("Applying event channel update: {:?}", update);
+                            if let Err(err) = updater.apply_update(update).await {
+                                error!("Error processing channel update: {:?}", err);
+                                break 'restart_updater;
+                            }
+                        }
+                    }
+                };
             }
 
             // If an error occurs handling an event update, ChannelUpdater's state may be out of
@@ -127,6 +149,8 @@ enum ChannelUpdate<'a> {
 // check when sending if the buffer is currently full so that we can log.
 const EVENT_CHANGE_BUFFER_SIZE: usize = 10;
 
+struct ChannelUpdaterEvent(Arc<ModelEvent>);
+
 // ChannelUpdater performs all updating of event embeds in event channels. It receives actions to
 // apply from EventChannel, calculated by ChannelEvents, and applies them in order.
 //
@@ -134,27 +158,43 @@ const EVENT_CHANGE_BUFFER_SIZE: usize = 10;
 // new messages, since the message ID then won't be known until ChannelUpdater creates it. Instead,
 // ChannelEvents only keeps track of event ordering in a channel and then specifies actions in terms
 // of indexes, and ChannelUpdater turns that into a message ID.
-//
-// TODO: Handle our messages getting deleted not by us, state would be stale.
 struct ChannelUpdater {
-    http: Arc<CacheAndHttp>,
+    ctx: Context,
     channel: ChannelId,
     messages: Vec<Message>,
+
+    // Note that the "Event" in EventCollector is referring to Discord gateway events.
+    collector: EventCollector,
 }
 
 impl ChannelUpdater {
     /// Creates a new ChannelUpdater, populating its state with the channel's current messages and
     /// updating those messages as needed to match the provided ChannelEvents, such that the
     /// ChannelUpdater is ready to apply updates for new event changes (through `apply_update`).
-    pub async fn new(
-        http: Arc<CacheAndHttp>,
-        channel: ChannelId,
-        events: &ChannelEvents,
-    ) -> Result<Self> {
+    pub async fn new(ctx: Context, channel: ChannelId, events: &ChannelEvents) -> Result<Self> {
+        // Set up a collector for any message change events in this channel that aren't from the bot.
+        let own_id = ctx.cache.current_user_id().await;
+        let collector = EventCollectorBuilder::new(&ctx)
+            .add_event_type(EventType::MessageCreate)
+            .add_event_type(EventType::MessageUpdate)
+            .add_event_type(EventType::MessageDelete)
+            .add_event_type(EventType::MessageDeleteBulk)
+            .add_channel_id(channel)
+            .filter(move |e| match e.as_ref() {
+                // Don't care about our own message create events. If we could filter out our own
+                // updates and deletes here we would, but the event doesn't say who performed the
+                // update/delete.
+                ModelEvent::MessageCreate(e) => e.message.author.id != own_id,
+                _ => true,
+            })
+            .await
+            .expect("Bad EventCollector filter setup");
+
         let mut updater = ChannelUpdater {
-            http,
+            ctx,
             channel,
             messages: Vec::new(),
+            collector,
         };
 
         updater.populate_current_messages().await?;
@@ -177,15 +217,80 @@ impl ChannelUpdater {
         Ok(updater)
     }
 
+    pub async fn next_updater_event(&mut self) -> Result<ChannelUpdaterEvent> {
+        Ok(ChannelUpdaterEvent(
+            self.collector
+                .next()
+                .await
+                .ok_or_else(|| format_err!("Collector stream returned None, closed?"))?,
+        ))
+    }
+
+    pub async fn process_updater_event(
+        &mut self,
+        updater_event: ChannelUpdaterEvent,
+        events: &ChannelEvents,
+    ) -> Result<()> {
+        let prev_len = self.messages.len();
+        match updater_event.0.as_ref() {
+            ModelEvent::MessageCreate(e) => {
+                // The collector filter already filtered out our own messages, so this is
+                // someone else; delete it.
+                e.message.delete(&self.ctx).await.with_context(|| {
+                    format!(
+                        "Failed to delete message {} in channel {}",
+                        e.message.id, self.channel
+                    )
+                })?;
+            }
+            ModelEvent::MessageUpdate(e) => {
+                // Others can only suppress embeds, any other edits are from the bot.
+                if let Some(flags) = e.flags {
+                    if flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
+                        if let Some(existing) = self.messages.iter_mut().find(|m| m.id == e.id) {
+                            existing
+                                .edit(&self.ctx, |msg| msg.suppress_embeds(false))
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to un-suppress embeds on message {}", e.id)
+                                })?;
+                        } else {
+                            error!("MessageUpdate event for unknown message {}", e.id);
+                        }
+                    }
+                }
+            }
+            ModelEvent::MessageDelete(e) => {
+                self.messages.retain(|m| m.id != e.message_id);
+            }
+            ModelEvent::MessageDeleteBulk(e) => {
+                self.messages.retain(|m| !e.ids.contains(&m.id));
+            }
+            e => error!("Collector got unexpected event: {:?}", e),
+        }
+
+        // Repair channel if messages were deleted.
+        if prev_len != self.messages.len() {
+            let updates = self.updates_needed_to_match_events(events);
+            for update in updates {
+                self.apply_update(update)
+                    .await
+                    .context("Error while repairing channel messages after delete")?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn populate_current_messages(&mut self) -> Result<()> {
-        let cache = &self.http.cache;
         let mut messages: Vec<_> = self
             .channel
-            .messages_iter(&self.http.http)
+            .messages_iter(&self.ctx)
             .try_filter_map(|msg| async {
-                Ok(if msg.is_own(cache).await {
+                Ok(if msg.is_own(&self.ctx).await {
                     Some(msg)
                 } else {
+                    // TODO: Delete messages that aren't our own
                     None
                 })
             })
@@ -249,7 +354,7 @@ impl ChannelUpdater {
             ChannelUpdate::New { event } => {
                 let message = self
                     .channel
-                    .send_message(&self.http.http, |msg| {
+                    .send_message(&self.ctx, |msg| {
                         msg.set_embed(event.as_embed()).components(|c| {
                             *c = event.event_buttons();
                             c
@@ -265,14 +370,13 @@ impl ChannelUpdater {
                     .get_mut(idx)
                     .expect("Message index OOB, state inconsistent");
                 message
-                    .edit(&self.http, |msg| {
-                        // TODO: Switch to suppress_embeds(false) once serenity-rs/serenity#1436
-                        // lands
-                        msg.0.insert("flags", serde_json::json!(0));
-                        msg.set_embed(event.as_embed()).components(|c| {
-                            *c = event.event_buttons();
-                            c
-                        })
+                    .edit(&self.ctx, |msg| {
+                        msg.set_embed(event.as_embed())
+                            .components(|c| {
+                                *c = event.event_buttons();
+                                c
+                            })
+                            .suppress_embeds(false)
                     })
                     .await
                     .context("Failed to edit message")?;
@@ -280,7 +384,7 @@ impl ChannelUpdater {
             ChannelUpdate::Delete { idx } => {
                 let message = self.messages.remove(idx);
                 message
-                    .delete(&self.http)
+                    .delete(&self.ctx)
                     .await
                     .context("Failed to delete message")?;
             }

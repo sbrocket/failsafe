@@ -40,10 +40,10 @@ impl EmbedMessages {
     }
 
     /// Asychronously (in a spawned task) update the embeds in tracked messages.
-    pub fn start_updating_embeds(&self, http: &Arc<Http>, event: &Event) {
+    pub fn start_updating_embeds(&self, http: impl AsRef<Arc<Http>>, event: &Event) {
         let embed = event.as_embed();
         let event_id = event.id;
-        let http = http.clone();
+        let http = http.as_ref().clone();
         let messages = self.messages.clone();
         let update_fut = async move {
             let messages = messages.read().await;
@@ -104,9 +104,9 @@ impl EmbedMessages {
         });
     }
 
-    pub async fn start_deleting_embeds(&self, http: &Arc<Http>, event: &Event) {
+    pub async fn start_deleting_embeds(&self, http: impl AsRef<Arc<Http>>, event: &Event) {
         let event_id = event.id;
-        let http = http.clone();
+        let http = http.as_ref().clone();
         let mut messages = self.messages.write().await;
         let mut event_messages = if let Some(m) = messages.remove(&event_id) {
             m
