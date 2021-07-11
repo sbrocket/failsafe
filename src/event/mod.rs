@@ -183,6 +183,7 @@ impl PartialOrd for Event {
     }
 }
 
+// Events are ordered first by their datetime, and then by their event IDs (which are unique).
 impl Ord for Event {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.datetime
