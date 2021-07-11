@@ -78,20 +78,6 @@ pub trait InteractionExt: Send + Sync {
     ) -> serenity::Result<Message>;
 }
 
-pub trait OptionsExt {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>>;
-
-    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>>;
-}
-
-#[async_trait]
-pub trait ContextExt {
-    async fn get_event_manager<I: InteractionExt>(
-        &self,
-        interaction: &I,
-    ) -> Result<Arc<EventManager>>;
-}
-
 macro_rules! impl_interaction_ext {
     ($ty:ty, $kind:ident) => {
         #[async_trait]
@@ -209,6 +195,12 @@ macro_rules! impl_interaction_ext {
 impl_interaction_ext!(ApplicationCommandInteraction, ApplicationCommand);
 impl_interaction_ext!(MessageComponentInteraction, MessageComponent);
 
+pub trait OptionsExt {
+    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>>;
+
+    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>>;
+}
+
 impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
     fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>> {
         let name = name.as_ref();
@@ -235,6 +227,14 @@ impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
             |v| Ok(Some(v)),
         )
     }
+}
+
+#[async_trait]
+pub trait ContextExt {
+    async fn get_event_manager<I: InteractionExt>(
+        &self,
+        interaction: &I,
+    ) -> Result<Arc<EventManager>>;
 }
 
 #[async_trait]
