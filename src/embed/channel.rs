@@ -8,7 +8,7 @@ use serenity::{
     model::{
         channel::{Message, MessageFlags},
         event::{Event as ModelEvent, EventType},
-        id::ChannelId,
+        id::{ChannelId, GuildId},
     },
     prelude::*,
 };
@@ -283,16 +283,24 @@ impl ChannelUpdater {
     }
 
     async fn populate_current_messages(&mut self) -> Result<()> {
+        let own_id = self.ctx.cache.current_user_id().await;
         let mut messages: Vec<_> = self
             .channel
             .messages_iter(&self.ctx)
-            .try_filter_map(|msg| async {
-                Ok(if msg.is_own(&self.ctx).await {
-                    Some(msg)
-                } else {
-                    // TODO: Delete messages that aren't our own
-                    None
-                })
+            .try_filter_map(|mut msg| async {
+                if msg.author.id != own_id {
+                    // Delete messages that aren't from the bot.
+                    // TODO(serenity-rs/serenity#1439): We set guild ID to something non-None
+                    // because guild_id is missing for messages acquired over the HTTP API, which
+                    // confuses delete() into thinking this is a private message we can't delete.
+                    // The guild id doesn't actually have to be correct.
+                    msg.guild_id = Some(GuildId(1));
+                    if let Err(err) = msg.delete(&self.ctx).await {
+                        error!("Failed to delete non-own message {}: {:?}", msg.id, err);
+                    }
+                    return Ok(None);
+                }
+                Ok(Some(msg))
             })
             .try_collect()
             .await
