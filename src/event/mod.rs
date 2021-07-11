@@ -139,7 +139,7 @@ impl std::fmt::Display for JoinKind {
 }
 
 /// A single scheduled event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Event {
     pub id: EventId,
     pub activity: Activity,
@@ -176,23 +176,6 @@ impl Default for Event {
         }
     }
 }
-
-// TODO: Switch to deriving this once embed_messages is moved out
-impl PartialEq for Event {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self.activity == other.activity
-            && self.datetime == other.datetime
-            && self.description == other.description
-            && self.group_size == other.group_size
-            && self.creator == other.creator
-            && self.confirmed == other.confirmed
-            && self.alternates == other.alternates
-            && self.maybe == other.maybe
-    }
-}
-
-impl Eq for Event {}
 
 impl PartialOrd for Event {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
