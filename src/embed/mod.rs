@@ -67,8 +67,6 @@ where
 
 const STORE_NAME: &str = "embeds.json";
 
-// TODO: Use a MessageCollector to collect messages in the event channels that aren't from the bot
-// and delete them.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct EmbedManager {
