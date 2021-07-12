@@ -1,4 +1,4 @@
-use crate::event::Event;
+use crate::event::{Event, EventChange};
 use anyhow::{format_err, Context as _, Result};
 use derivative::Derivative;
 use futures::prelude::*;
@@ -15,13 +15,6 @@ use serenity::{
 use std::{cmp, collections::BTreeSet, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, warn};
-
-#[derive(Debug)]
-pub enum EventChange {
-    Added(Arc<Event>),
-    Deleted(Arc<Event>),
-    Edited(Arc<Event>),
-}
 
 const CHANNEL_UPDATER_DELAY_PER_RETRY: u64 = 5;
 const CHANNEL_UPDATER_DELAY_CAP: u64 = 60;

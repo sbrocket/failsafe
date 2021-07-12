@@ -1,6 +1,6 @@
 use crate::{
     activity::ActivityType,
-    event::{Event, EventId},
+    event::{Event, EventChange, EventId},
     store::{PersistentStore, PersistentStoreBuilder},
 };
 use anyhow::Result;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 mod channel;
 mod fixed;
 
-use channel::{EventChange, EventChannel};
+use channel::EventChannel;
 pub use fixed::EventEmbedMessage;
 
 // TODO: Replace this hardcoded event channel configuration with commands to configure this.
@@ -106,30 +106,24 @@ impl EmbedManager {
         })
     }
 
-    pub async fn event_added(&mut self, event: Arc<Event>) {
+    pub async fn event_changed(&mut self, change: EventChange) -> Result<()> {
         for chan in self.event_channels.iter_mut() {
-            chan.handle_event_change(EventChange::Added(event.clone()))
-                .await;
+            chan.handle_event_change(change.clone()).await;
         }
-    }
 
-    pub async fn event_edited(&mut self, event: Arc<Event>) {
-        for chan in self.event_channels.iter_mut() {
-            chan.handle_event_change(EventChange::Edited(event.clone()))
-                .await;
+        match change {
+            EventChange::Added(_) => {}
+            EventChange::Edited(event) => {
+                self.embed_messages.start_updating_embeds(&self.ctx, &event)
+            }
+            EventChange::Deleted(event) => {
+                self.embed_messages
+                    .start_deleting_embeds(&self.ctx, &event)
+                    .await;
+                self.store.store(&self.embed_messages).await?;
+            }
         }
-        self.embed_messages.start_updating_embeds(&self.ctx, &event);
-    }
-
-    pub async fn event_deleted(&mut self, event: Arc<Event>) -> Result<()> {
-        for chan in self.event_channels.iter_mut() {
-            chan.handle_event_change(EventChange::Deleted(event.clone()))
-                .await;
-        }
-        self.embed_messages
-            .start_deleting_embeds(&self.ctx, &event)
-            .await;
-        self.store.store(&self.embed_messages).await
+        Ok(())
     }
 
     pub async fn keep_embed_updated(

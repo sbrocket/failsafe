@@ -343,25 +343,52 @@ impl Event {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum EventChange {
+    Added(Arc<Event>),
+    Deleted(Arc<Event>),
+    Edited(Arc<Event>),
+}
+
 type EventsCollection = BTreeMap<EventId, Arc<Event>>;
 
-const STORE_NAME: &str = "events.json";
+const EVENTS_STORE_NAME: &str = "events.json";
 
 #[derive(Debug)]
 struct EventManagerState {
     events: EventsCollection,
+    events_store: PersistentStore<EventsCollection>,
     next_id: HashMap<Activity, u8>,
     embed_manager: Option<EmbedManager>,
 }
 
-#[cfg(test)]
-impl Default for EventManagerState {
-    fn default() -> Self {
-        EventManagerState {
-            events: Default::default(),
+impl EventManagerState {
+    pub async fn load(ctx: Context, store_builder: &PersistentStoreBuilder) -> Result<Self> {
+        let events_store = store_builder.build(EVENTS_STORE_NAME).await?;
+        let events: EventsCollection = events_store.load().await?;
+
+        let embed_manager = Some(EmbedManager::new(ctx, store_builder, events.values()).await?);
+
+        Ok(EventManagerState {
+            events,
+            events_store,
             next_id: Default::default(),
-            embed_manager: None,
+            embed_manager,
+        })
+    }
+
+    pub async fn modify_event<F, T>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut EventsCollection) -> Result<(Option<EventChange>, T)>,
+    {
+        let (change, ret) = f(&mut self.events)?;
+        if let Some(change) = change {
+            self.events_store.store(&self.events).await?;
+            if let Some(mgr) = &mut self.embed_manager {
+                mgr.event_changed(change).await?;
+            }
         }
+        Ok(ret)
     }
 }
 
@@ -397,25 +424,16 @@ impl EventManagerState {
 #[derive(Debug)]
 pub struct EventManager {
     store_builder: PersistentStoreBuilder,
-    store: PersistentStore<EventsCollection>,
     state: RwLock<EventManagerState>,
     removed_from_guild: AtomicBool,
 }
 
 impl EventManager {
     pub async fn new(ctx: Context, store_builder: PersistentStoreBuilder) -> Result<Self> {
-        let store = store_builder.build(STORE_NAME).await?;
-        let events: EventsCollection = store.load().await?;
-        let embed_manager = Some(EmbedManager::new(ctx, &store_builder, events.values()).await?);
-
+        let state = RwLock::new(EventManagerState::load(ctx, &store_builder).await?);
         Ok(EventManager {
             store_builder,
-            store,
-            state: RwLock::new(EventManagerState {
-                events,
-                next_id: Default::default(),
-                embed_manager,
-            }),
+            state,
             removed_from_guild: Default::default(),
         })
     }
@@ -427,11 +445,15 @@ impl EventManager {
         let store_builder = PersistentStoreBuilder::new(tempdir.into_path())
             .await
             .expect("Failed to create PersistentStoreBuilder");
-        let store = store_builder.build(STORE_NAME).await.unwrap();
+        let events_store = store_builder.build(EVENTS_STORE_NAME).await.unwrap();
         EventManager {
             store_builder,
-            store,
-            state: Default::default(),
+            state: RwLock::new(EventManagerState {
+                events: Default::default(),
+                events_store,
+                next_id: Default::default(),
+                embed_manager: None,
+            }),
             removed_from_guild: Default::default(),
         }
     }
@@ -465,11 +487,12 @@ impl EventManager {
             maybe: vec![],
         });
 
-        state.events.insert(id, event.clone());
-        self.store.store(&state.events).await?;
-        if let Some(mgr) = &mut state.embed_manager {
-            mgr.event_added(event).await;
-        }
+        state
+            .modify_event(|events| {
+                events.insert(id, event.clone());
+                Ok((Some(EventChange::Added(event)), ()))
+            })
+            .await?;
 
         let event = state.events.get(&id).unwrap().clone();
         Ok(event)
@@ -486,12 +509,12 @@ impl EventManager {
 
         let key = event.id;
         let event = Arc::new(event);
-        state.events.insert(key, event.clone());
-        self.store.store(&state.events).await?;
-        if let Some(mgr) = &mut state.embed_manager {
-            mgr.event_added(event).await;
-        }
-        Ok(())
+        state
+            .modify_event(|events| {
+                events.insert(key, event.clone());
+                Ok((Some(EventChange::Added(event)), ()))
+            })
+            .await
     }
 
     pub async fn get_event(&self, id: &EventId) -> Option<Arc<Event>> {
@@ -511,35 +534,30 @@ impl EventManager {
         let mut state = self.state.write().await;
 
         // Clone the current Event value for this id
-        Ok(match state.events.get_mut(&id) {
-            Some(event) => {
-                let mut modified = (**event).clone();
-                let ret = edit_fn(Some(&mut modified));
-                *event = Arc::new(modified);
+        state
+            .modify_event(|events| match events.get_mut(&id) {
+                Some(event) => {
+                    let mut modified = (**event).clone();
+                    let ret = edit_fn(Some(&mut modified));
+                    *event = Arc::new(modified);
 
-                let event = event.clone();
-                self.store.store(&state.events).await?;
-                if let Some(mgr) = &mut state.embed_manager {
-                    mgr.event_edited(event).await;
+                    Ok((Some(EventChange::Edited(event.clone())), ret))
                 }
-                ret
-            }
-            None => edit_fn(None),
-        })
+                None => Ok((None, edit_fn(None))),
+            })
+            .await
     }
 
     pub async fn delete_event(&self, id: &EventId) -> Result<()> {
         let mut state = self.state.write().await;
-        let event = state
-            .events
-            .remove(&id)
-            .ok_or(format_err!("Event {} does not exist", id))?;
-
-        self.store.store(&state.events).await?;
-        if let Some(mgr) = &mut state.embed_manager {
-            mgr.event_deleted(event).await?;
-        }
-        Ok(())
+        state
+            .modify_event(|events| {
+                let event = events
+                    .remove(id)
+                    .ok_or(format_err!("Event {} does not exist", id))?;
+                Ok((Some(EventChange::Deleted(event)), ()))
+            })
+            .await
     }
 
     /// Adds a new message that contains this event's embed and which should be kept up to date as
