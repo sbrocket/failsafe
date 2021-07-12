@@ -127,16 +127,39 @@ pub async fn handle_component_interaction(
     let custom_id = &interaction.data.custom_id;
     debug!("handling component interaction, id '{}'", custom_id);
 
-    let user = &interaction.user;
+    let member = interaction
+        .member
+        .as_ref()
+        .ok_or_else(|| format_err!("Interaction not in a guild"))?;
     let (action, event_id) = custom_id
         .split_once(":")
         .ok_or_else(|| format_err!("Received unexpected component custom_id: {}", custom_id))?;
 
     match action {
-        "join" => join::join(ctx, interaction, event_id, user, None, JoinKind::Confirmed).await,
-        "alt" => join::join(ctx, interaction, event_id, user, None, JoinKind::Alternate).await,
-        "maybe" => join::join(ctx, interaction, event_id, user, None, JoinKind::Maybe).await,
-        "leave" => leave::leave(ctx, interaction, event_id, user).await,
+        "join" => {
+            join::join(
+                ctx,
+                interaction,
+                event_id,
+                member,
+                None,
+                JoinKind::Confirmed,
+            )
+            .await
+        }
+        "alt" => {
+            join::join(
+                ctx,
+                interaction,
+                event_id,
+                member,
+                None,
+                JoinKind::Alternate,
+            )
+            .await
+        }
+        "maybe" => join::join(ctx, interaction, event_id, member, None, JoinKind::Maybe).await,
+        "leave" => leave::leave(ctx, interaction, event_id, member).await,
         _ => Err(format_err!(
             "Received unexpected component custom_id: {}",
             custom_id

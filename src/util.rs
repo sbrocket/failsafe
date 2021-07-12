@@ -279,3 +279,42 @@ pub async fn tempfile() -> Result<(PathBuf, File)> {
     }
     Err(format_err!("Failed to create tempfile"))
 }
+
+pub trait MemberLike: Send + Sync {
+    fn user(&self) -> &User;
+    fn id(&self) -> UserId;
+    fn display_name(&self) -> &str;
+}
+
+impl MemberLike for Member {
+    fn user(&self) -> &User {
+        &self.user
+    }
+
+    fn id(&self) -> UserId {
+        self.user.id
+    }
+
+    fn display_name(&self) -> &str {
+        self.nick
+            .as_deref()
+            .unwrap_or_else(|| self.user.name.as_str())
+    }
+}
+
+impl MemberLike for (&User, &PartialMember) {
+    fn user(&self) -> &User {
+        &self.0
+    }
+
+    fn id(&self) -> UserId {
+        self.0.id
+    }
+
+    fn display_name(&self) -> &str {
+        self.1
+            .nick
+            .as_deref()
+            .unwrap_or_else(|| self.0.name.as_str())
+    }
+}

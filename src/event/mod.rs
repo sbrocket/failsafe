@@ -3,6 +3,7 @@ use crate::{
     embed::EmbedManager,
     store::{PersistentStore, PersistentStoreBuilder},
     time::serialize_datetime_tz,
+    util::*,
 };
 use anyhow::{format_err, Context as _, Error, Result};
 use chrono::{DateTime, Utc};
@@ -12,7 +13,7 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
     builder::{CreateActionRow, CreateButton, CreateComponents, CreateEmbed},
-    model::{id::UserId, interactions::message_component::ButtonStyle, prelude::*},
+    model::{interactions::message_component::ButtonStyle, prelude::*},
     prelude::*,
     utils::Color,
 };
@@ -86,24 +87,24 @@ impl TryFrom<String> for EventId {
 // TODO: We currently persist the last seen username. Need to make sure these stay up to date as we
 // get new user info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventUser {
+pub struct EventMember {
     pub id: UserId,
     pub name: String,
 }
 
-impl PartialEq for EventUser {
+impl PartialEq for EventMember {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for EventUser {}
+impl Eq for EventMember {}
 
-impl From<&User> for EventUser {
-    fn from(user: &User) -> Self {
-        EventUser {
-            id: user.id,
-            name: user.name.clone(),
+impl From<&dyn MemberLike> for EventMember {
+    fn from(member: &dyn MemberLike) -> Self {
+        EventMember {
+            id: member.user().id,
+            name: member.display_name().to_owned(),
         }
     }
 }
@@ -147,20 +148,20 @@ pub struct Event {
     pub datetime: DateTime<Tz>,
     pub description: String,
     pub group_size: u8,
-    #[serde(default)]
     pub recur: bool,
-    pub creator: EventUser,
-    pub confirmed: Vec<EventUser>,
-    pub alternates: Vec<EventUser>,
-    #[serde(default)]
-    pub maybe: Vec<EventUser>,
+    pub creator: EventMember,
+    pub confirmed: Vec<EventMember>,
+    pub alternates: Vec<EventMember>,
+    pub maybe: Vec<EventMember>,
 }
 
 #[cfg(test)]
 impl Default for Event {
     fn default() -> Self {
-        let user = User::default();
-        let creator = EventUser::from(&user);
+        let creator = EventMember {
+            id: UserId(1),
+            name: "default".into(),
+        };
         let activity = Activity::Custom;
         Event {
             id: event_id(activity, 1),
@@ -200,19 +201,19 @@ lazy_static! {
 
 impl Event {
     // TODO: Add a limit on how many people can join an event.
-    pub fn join(&mut self, user: &User, kind: JoinKind) -> Result<()> {
+    pub fn join(&mut self, member: &dyn MemberLike, kind: JoinKind) -> Result<()> {
         let list = match kind {
             JoinKind::Confirmed => &mut self.confirmed,
             JoinKind::Alternate => &mut self.alternates,
             JoinKind::Maybe => &mut self.maybe,
         };
-        if !*ALLOW_DUPLICATE_JOIN && list.iter().any(|u| u.id == user.id) {
+        if !*ALLOW_DUPLICATE_JOIN && list.iter().any(|u| u.id == member.id()) {
             return Err(format_err!("User already in event"));
         }
 
         // Remove user from any other lists so that they don't end up in multiple.
         if !*ALLOW_DUPLICATE_JOIN {
-            self.leave(user).ok();
+            self.leave(member).ok();
         }
 
         match kind {
@@ -220,15 +221,15 @@ impl Event {
             JoinKind::Alternate => &mut self.alternates,
             JoinKind::Maybe => &mut self.maybe,
         }
-        .push(user.into());
+        .push(member.into());
         Ok(())
     }
 
-    pub fn leave(&mut self, user: &User) -> Result<()> {
+    pub fn leave(&mut self, member: &dyn MemberLike) -> Result<()> {
         let count_before = self.confirmed.len() + self.alternates.len() + self.maybe.len();
-        self.confirmed.retain(|u| u.id != user.id);
-        self.alternates.retain(|u| u.id != user.id);
-        self.maybe.retain(|u| u.id != user.id);
+        self.confirmed.retain(|u| u.id != member.id());
+        self.alternates.retain(|u| u.id != member.id());
+        self.maybe.retain(|u| u.id != member.id());
         let count_after = self.confirmed.len() + self.alternates.len() + self.maybe.len();
 
         if count_before == count_after {
@@ -241,7 +242,7 @@ impl Event {
         self.datetime.format("%-I:%M %p %Z %-m/%-d").to_string()
     }
 
-    fn confirmed_groups(&self) -> Vec<Vec<(&EventUser, bool)>> {
+    fn confirmed_groups(&self) -> Vec<Vec<(&EventMember, bool)>> {
         let chunk_size = self.group_size as usize;
         let combined = self
             .confirmed
@@ -257,7 +258,7 @@ impl Event {
             .collect()
     }
 
-    fn extra_alts(&self) -> impl Iterator<Item = &EventUser> {
+    fn extra_alts(&self) -> impl Iterator<Item = &EventMember> {
         let total = self.confirmed.len() + self.alternates.len();
         let partial_group = total % self.group_size as usize;
         let skip = if self.alternates.len() >= partial_group {
@@ -442,7 +443,7 @@ impl EventManager {
 
     pub async fn create_event(
         &self,
-        creator: &User,
+        creator: &dyn MemberLike,
         activity: Activity,
         datetime: DateTime<Tz>,
         description: impl Into<String>,
@@ -450,7 +451,7 @@ impl EventManager {
         let mut state = self.state.write().await;
         let id = state.next_id(activity)?;
         let description = description.into();
-        let creator: EventUser = creator.into();
+        let creator: EventMember = creator.into();
         let event = Arc::new(Event {
             id,
             activity,
@@ -600,6 +601,21 @@ mod tests {
                 })
                 .await
                 .expect("Error while adding test events");
+        }
+    }
+
+    // Helper for tests since Member doesn't implement Default
+    impl MemberLike for User {
+        fn user(&self) -> &User {
+            &self
+        }
+
+        fn id(&self) -> UserId {
+            self.id
+        }
+
+        fn display_name(&self) -> &str {
+            &self.name
         }
     }
 

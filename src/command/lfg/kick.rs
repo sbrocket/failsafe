@@ -62,16 +62,19 @@ async fn lfg_kick(
         return Ok(());
     }
 
-    let target_user = match options.get_resolved("user")? {
-        Some(OptionValue::User(user, _)) => Ok(user),
+    let target_member = match options.get_resolved("user")? {
+        Some(OptionValue::User(user, Some(member))) => Ok((user, member)),
+        Some(OptionValue::User(..)) => Err(format_err!(
+            "Missing PartialMember, interaction not in a guild"
+        )),
         Some(v) => Err(format_err!("Unexpected resolved value type: {:?}", v)),
         None => Err(format_err!("Missing required user value")),
     }?;
 
-    let user_mention = target_user.mention().to_string();
+    let user_mention = target_member.user().mention();
     let event_manager = ctx.get_event_manager(interaction).await?;
     let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
-        match event.leave(&target_user) {
+        match event.leave(&target_member) {
             Ok(()) => format!(
                 "Removed {} from the {} event at {}",
                 user_mention,
@@ -89,7 +92,7 @@ async fn lfg_kick(
     let content = match edit_result {
         Ok(content) => content,
         Err(err) => {
-            error!("Failed to kick {} from event: {:?}", target_user.name, err);
+            error!("Failed to kick {} from event: {:?}", user_mention, err);
             format!(
                 "Sorry Captain, I seem to be having trouble removing {} from that event...",
                 user_mention

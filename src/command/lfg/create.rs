@@ -68,7 +68,10 @@ async fn lfg_create(
 ) -> Result<()> {
     let recv_time = Utc::now();
 
-    let user = &interaction.user;
+    let member = interaction
+        .member
+        .as_ref()
+        .ok_or_else(|| format_err!("Interaction not in a guild"))?;
     let activity = match options.get_value("activity")? {
         Some(Value::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
@@ -114,7 +117,7 @@ async fn lfg_create(
     // Create the event!
     let event_manager = ctx.get_event_manager(interaction).await?;
     let event = match event_manager
-        .create_event(&user, activity, datetime, description)
+        .create_event(member, activity, datetime, description)
         .await
     {
         Ok(event) => event,
