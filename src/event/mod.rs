@@ -286,9 +286,13 @@ impl Event {
 
     pub fn as_embed(&self) -> CreateEmbed {
         let mut embed = CreateEmbed::default();
+        let mut start_time = self.formatted_datetime();
+        if self.recur {
+            start_time.push_str("\nRecurs weekly");
+        }
         embed
             .field("Activity", self.activity, true)
-            .field("Start Time", self.formatted_datetime(), true)
+            .field("Start Time", start_time, true)
             .field("Event ID", self.id, true)
             .field("Description", self.description.clone(), false)
             .color(Color::DARK_GOLD)
