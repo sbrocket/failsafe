@@ -1,3 +1,6 @@
-/target
-/state
+.crates.toml
+.crates2.json
 .env
+/bin
+/state
+/target

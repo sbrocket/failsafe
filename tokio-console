@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Install the same version of the console binary as the console-subscriber dependency
+# and run it
+
+source=`cargo metadata --format-version=1 | \
+    jq -r '.packages[].dependencies[] | select(.name == "console-subscriber").source'`
+
+repo=${source#git\+}
+repo=${repo%%?rev*}
+rev=${source#*rev=}
+
+cargo install --root `dirname "$0"` --git $repo --rev $rev --bin console
+exec ./bin/console

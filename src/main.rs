@@ -12,7 +12,7 @@ use serenity::{
 use std::sync::Arc;
 use store::PersistentStoreBuilder;
 use tracing::{debug, error, info};
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[macro_use]
 mod activity;
@@ -79,11 +79,27 @@ async fn main() {
     dotenv::dotenv().ok();
 
     // Setup tracing/logging.
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_target(true)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to start the logger");
+    let env_filter: EnvFilter;
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(true);
+    let registry = tracing_subscriber::registry().with(fmt_layer);
+    {
+        #[cfg(feature = "tokio-console")]
+        {
+            env_filter =
+                EnvFilter::from_default_env().add_directive("tokio=trace".parse().unwrap());
+            let (console_layer, server) = console_subscriber::TasksLayer::new();
+            tokio::spawn(server.serve());
+            registry.with(console_layer)
+        }
+        #[cfg(not(feature = "tokio-console"))]
+        {
+            env_filter = EnvFilter::from_default_env();
+            registry
+        }
+    }
+    .with(env_filter)
+    .try_init()
+    .expect("Failed to setup tracing subscriber");
 
     let token = std::env::var("DISCORD_BOT_TOKEN").expect("Missing $DISCORD_BOT_TOKEN");
     let app_id = std::env::var("DISCORD_APP_ID")

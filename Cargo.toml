@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Bryan Henry <bryanhenry522@gmail.com>"]
 edition = "2018"
 
+[features]
+tokio-console = ["console-subscriber", "tracing-subscriber/registry"]
+
 [dependencies]
 anyhow = "1.0"
 chrono = "0.4"
@@ -38,3 +41,9 @@ features = ["builder", "cache", "client", "collector", "gateway", "http", "model
 #version = "0.10.8"
 git = "https://github.com/serenity-rs/serenity.git"
 rev = "3117f1da55436cd972ef0928d905e34e77692f13"
+
+[dependencies.console-subscriber]
+optional = true
+# console-subscriber is not yet published to crates.io, pin to a specific git revision
+git = "https://github.com/tokio-rs/console"
+rev = "52601b847780bb21e00cbac698f60de995dcc1d1"
