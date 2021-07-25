@@ -81,6 +81,10 @@ impl EmbedMessages {
 
         tokio::spawn(async move {
             let results = update_fut.await;
+            if results.is_empty() {
+                return;
+            }
+
             let (successes, failures): (Vec<_>, Vec<_>) =
                 results.into_iter().partition(Result::is_ok);
             let count = successes.len() + failures.len();
