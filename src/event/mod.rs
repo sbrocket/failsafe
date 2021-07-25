@@ -147,7 +147,7 @@ pub struct Event {
     pub id: EventId,
     pub activity: Activity,
     #[serde(with = "serialize_datetime_tz")]
-    pub datetime: DateTime<Tz>,
+    datetime: DateTime<Tz>,
     pub description: String,
     pub group_size: u8,
     pub recur: bool,
@@ -155,6 +155,8 @@ pub struct Event {
     pub confirmed: Vec<EventMember>,
     pub alternates: Vec<EventMember>,
     pub maybe: Vec<EventMember>,
+    /// Alert protocol initiated. This gets reset if the Event's time changes.
+    pub alerted: bool,
 }
 
 #[cfg(test)]
@@ -176,6 +178,7 @@ impl Default for Event {
             confirmed: vec![creator],
             alternates: vec![],
             maybe: vec![],
+            alerted: false,
         }
     }
 }
@@ -202,6 +205,16 @@ lazy_static! {
 }
 
 impl Event {
+    /// Get the current datetime.
+    pub fn datetime(&self) -> DateTime<Tz> {
+        self.datetime
+    }
+
+    pub fn set_datetime(&mut self, new: DateTime<Tz>) {
+        self.datetime = new;
+        self.alerted = false;
+    }
+
     // TODO: Add a limit on how many people can join an event.
     pub fn join(&mut self, member: &dyn MemberLike, kind: JoinKind) -> Result<()> {
         let list = match kind {
@@ -487,6 +500,7 @@ impl EventManager {
             confirmed: vec![creator],
             alternates: vec![],
             maybe: vec![],
+            alerted: false,
         });
 
         state

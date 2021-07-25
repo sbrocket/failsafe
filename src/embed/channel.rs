@@ -510,12 +510,11 @@ mod test {
     use std::iter;
 
     fn test_event(activity: Activity, idx: u8, hours_away: i64) -> Arc<Event> {
-        Arc::new(Event {
-            id: EventId { activity, idx },
-            activity,
-            datetime: Utc::now().with_timezone(&Tz::PST8PDT) + Duration::hours(hours_away),
-            ..Default::default()
-        })
+        let mut event = Event::default();
+        event.id = EventId { activity, idx };
+        event.activity = activity;
+        event.set_datetime(Utc::now().with_timezone(&Tz::PST8PDT) + Duration::hours(hours_away));
+        Arc::new(event)
     }
 
     fn new_action(event: &Arc<Event>) -> ChannelUpdate {
@@ -593,7 +592,7 @@ mod test {
 
         // Update the time of the latest event so that it is now the earliest.
         let mut event0 = event3.clone();
-        Arc::make_mut(&mut event0).datetime = event3.datetime - Duration::hours(4);
+        Arc::make_mut(&mut event0).set_datetime(event3.datetime() - Duration::hours(4));
         assert_eq!(
             chan.apply_event_change(EventChange::Edited(event0.clone()))
                 .collect::<Vec<_>>(),

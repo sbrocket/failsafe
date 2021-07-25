@@ -139,7 +139,7 @@ impl EditType {
 
     pub fn apply_edit(self, event: &mut Event) {
         match self {
-            EditType::Datetime(Ok(datetime)) => event.datetime = datetime,
+            EditType::Datetime(Ok(datetime)) => event.set_datetime(datetime),
             EditType::Description(Some(descr)) => event.description = descr,
             EditType::GroupSize(size) => event.group_size = size,
             EditType::Recur(recur) => event.recur = recur,

@@ -1,6 +1,6 @@
 use super::{Event, EventChange, EventId};
 use anyhow::Result;
-use chrono::{DateTime, Duration as SignedDuration, Utc};
+use chrono::{DateTime, Duration as SignedDuration, TimeZone, Utc};
 use chrono_tz::Tz;
 use futures::future::{abortable, AbortHandle};
 use serenity::async_trait;
@@ -40,14 +40,14 @@ pub struct ScheduledAction {
 impl ScheduledAction {
     pub fn new(event: &Event, delta: SignedDuration, action: EventAction) -> Self {
         ScheduledAction {
-            action_datetime: event.datetime + delta,
+            action_datetime: event.datetime() + delta,
             id: event.id,
             action,
-            event_datetime: event.datetime,
+            event_datetime: event.datetime(),
         }
     }
 
-    pub fn expired<T: chrono::TimeZone>(&self, now: &DateTime<T>) -> bool {
+    pub fn expired<T: TimeZone>(&self, now: &DateTime<T>) -> bool {
         &self.action_datetime <= now
     }
 }
@@ -89,19 +89,30 @@ pub struct EventSchedulerConfig {
 }
 
 impl EventSchedulerConfig {
-    fn actions_for_event(&self, event: &Event) -> impl Iterator<Item = ScheduledAction> {
-        IntoIterator::into_iter([
-            ScheduledAction::new(
+    fn actions_for_event<Tz: TimeZone>(
+        &self,
+        event: &Event,
+        now: &DateTime<Tz>,
+    ) -> Vec<ScheduledAction> {
+        // Only create an alert action if the event is in the future and hasn't already alerted. This ensures that:
+        // - We don't alert multiple times for an event that changes, say because someone
+        //   joins/leaves, unless its time changes (which resets 'alerted').
+        // - We don't alert for events that just need to be cleaned up, say if the bot was down when
+        //   the event occurred.
+        let mut actions = Vec::with_capacity(2);
+        if !event.alerted && &event.datetime() >= now {
+            actions.push(ScheduledAction::new(
                 event,
                 -SignedDuration::from_std(self.alert).unwrap(),
                 EventAction::Alert,
-            ),
-            ScheduledAction::new(
-                event,
-                SignedDuration::from_std(self.cleanup).unwrap(),
-                EventAction::Cleanup,
-            ),
-        ])
+            ));
+        }
+        actions.push(ScheduledAction::new(
+            event,
+            SignedDuration::from_std(self.cleanup).unwrap(),
+            EventAction::Cleanup,
+        ));
+        actions
     }
 }
 
@@ -146,8 +157,7 @@ impl<T: TimeSource> EventScheduler<T> {
     {
         let now = time_source.utc_now();
         let actions = initial_events
-            .flat_map(|e| config.actions_for_event(e))
-            .filter(|a| !a.expired(&now))
+            .flat_map(|e| config.actions_for_event(e, &now))
             .collect();
         EventScheduler {
             state: Arc::new(Mutex::new(EventSchedulerState {
@@ -174,11 +184,9 @@ impl<T: TimeSource> EventScheduler<T> {
         match change {
             EventChange::Added(event) | EventChange::Edited(event) => {
                 let now = state.time_source.utc_now();
-                state.actions.extend(
-                    self.config
-                        .actions_for_event(event)
-                        .filter(|a| !a.expired(&now)),
-                )
+                state
+                    .actions
+                    .extend(self.config.actions_for_event(event, &now));
             }
             EventChange::Deleted(_) => {}
         }
@@ -237,7 +245,7 @@ impl<T: TimeSource> EventSchedulerState<T> {
             // actually skip anything, but it is technically possible if an edit/delete happens
             // while the outer loop is holding our own state lock.
             let stale = handler
-                .with_event_for_id(next.id, |e| e.datetime != next.event_datetime)
+                .with_event_for_id(next.id, |e| e.datetime() != next.event_datetime)
                 .await
                 .unwrap_or(true);
             if stale {
@@ -293,8 +301,9 @@ impl<T: Ord + Clone> BTreeSetExt<T> for BTreeSet<T> {
 mod test {
     use super::*;
     use crate::activity::Activity;
+    use anyhow::format_err;
     use parking_lot::Mutex as SyncMutex;
-    use std::collections::HashMap;
+    use std::collections::{hash_map::Entry, HashMap};
     use tokio::time::Instant;
 
     // Fixture for testing EventScheduler. Creates and wraps EventScheduler, implements
@@ -344,16 +353,19 @@ mod test {
             test
         }
 
-        // Takes the last action that occurred, resetting the internal action buffer. Panics if more
-        // than one action has occurred since last reset.
-        pub fn take_last_action(&self) -> Option<ScheduledAction> {
+        // Takes the last action that occurred, resetting the internal action buffer. Returns Err
+        // if more than one action has occurred since last reset.
+        pub fn take_last_action(&self) -> Result<Option<ScheduledAction>> {
             let actions = self.last_actions.lock().take();
             match actions {
                 Some(mut actions) => {
-                    assert!(actions.len() == 1);
-                    Some(actions.remove(0))
+                    if actions.len() == 1 {
+                        Ok(Some(actions.remove(0)))
+                    } else {
+                        Err(format_err!("Multiple actions"))
+                    }
                 }
-                None => None,
+                None => Ok(None),
             }
         }
 
@@ -394,10 +406,11 @@ mod test {
                 .find(|(id, _)| id.idx == idx)
                 .expect("No matching EventId");
             let (id, mut event) = (id.clone(), event.clone());
-            Arc::make_mut(&mut event).datetime = self
-                .time_source
-                .from_start(Duration::from_secs(secs_from_start))
-                .with_timezone(&Tz::UTC);
+            Arc::make_mut(&mut event).set_datetime(
+                self.time_source
+                    .from_start(Duration::from_secs(secs_from_start))
+                    .with_timezone(&Tz::UTC),
+            );
 
             events.insert(id, event.clone());
             self.scheduler
@@ -432,6 +445,17 @@ mod test {
         }
 
         async fn perform_action(&self, action: &ScheduledAction) -> Result<()> {
+            let mut events = self.events.lock();
+            let mut entry = match events.entry(action.id) {
+                Entry::Occupied(entry) => Ok(entry),
+                Entry::Vacant(_) => Err(format_err!("No event with id {} exists", action.id)),
+            }?;
+            match action.action {
+                EventAction::Alert => Arc::make_mut(entry.get_mut()).alerted = true,
+                EventAction::Cleanup => {
+                    entry.remove();
+                }
+            }
             self.last_actions
                 .lock()
                 .get_or_insert(Vec::new())
@@ -497,23 +521,23 @@ mod test {
 
         // t == 11
         tokio::time::sleep(Duration::from_secs(11)).await;
-        assert!(test.take_last_action().is_none());
+        assert!(test.take_last_action().unwrap().is_none());
 
         // t == 21
         tokio::time::sleep(Duration::from_secs(10)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 2);
         assert_eq!(last.action, EventAction::Alert);
 
         // t == 41
         tokio::time::sleep(Duration::from_secs(20)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 3);
         assert_eq!(last.action, EventAction::Alert);
 
         // t == 61
         tokio::time::sleep(Duration::from_secs(20)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 2);
         assert_eq!(last.action, EventAction::Cleanup);
 
@@ -529,7 +553,7 @@ mod test {
 
         // t == 121
         tokio::time::sleep(Duration::from_secs(40)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 1);
         assert_eq!(last.action, EventAction::Cleanup);
     }
@@ -549,32 +573,35 @@ mod test {
 
         // t == 21
         tokio::time::sleep(Duration::from_secs(21)).await;
-        assert!(test.take_last_action().is_none());
+        assert!(test.take_last_action().unwrap().is_none());
 
         // t == 31
         tokio::time::sleep(Duration::from_secs(10)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 2);
         assert_eq!(last.action, EventAction::Alert);
 
         // Edit both events, changing their times.
-        // Note that event 1's Alert action shouldn't happen since it's in the past.
+        // Event 1 shouldn't alert since the event is now in the past.
+        // Event 2 should alert again since its time changed.
         test.edit_event_time(1, 30).await;
         test.edit_event_time(2, 50).await;
 
         // t == 41
         tokio::time::sleep(Duration::from_secs(10)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 2);
         assert_eq!(last.action, EventAction::Alert);
 
         // Edit both events, but not changing their times.
+        // Neither event should alert again since the time wasn't changed, even though event 2 isn't
+        // yet in the past.
         test.edit_event_non_time(1).await;
         test.edit_event_non_time(2).await;
 
         // t == 61
         tokio::time::sleep(Duration::from_secs(20)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 1);
         assert_eq!(last.action, EventAction::Cleanup);
 
@@ -584,7 +611,7 @@ mod test {
 
         // t == 191
         tokio::time::sleep(Duration::from_secs(130)).await;
-        let last = test.take_last_action().unwrap();
+        let last = test.take_last_action().unwrap().unwrap();
         assert_eq!(last.id.idx, 4);
         assert_eq!(last.action, EventAction::Alert);
     }
