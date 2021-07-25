@@ -7,7 +7,7 @@ use serenity::{
     collector::{EventCollector, EventCollectorBuilder},
     model::{
         channel::{Message, MessageFlags},
-        event::{Event as ModelEvent, EventType},
+        event::{Event as DiscordEvent, EventType},
         id::{ChannelId, GuildId},
     },
     prelude::*,
@@ -142,7 +142,7 @@ enum ChannelUpdate<'a> {
 // check when sending if the buffer is currently full so that we can log.
 const EVENT_CHANGE_BUFFER_SIZE: usize = 10;
 
-struct ChannelUpdaterEvent(Arc<ModelEvent>);
+struct ChannelUpdaterEvent(Arc<DiscordEvent>);
 
 // ChannelUpdater performs all updating of event embeds in event channels. It receives actions to
 // apply from EventChannel, calculated by ChannelEvents, and applies them in order.
@@ -177,7 +177,7 @@ impl ChannelUpdater {
                 // Don't care about our own message create events. If we could filter out our own
                 // updates and deletes here we would, but the event doesn't say who performed the
                 // update/delete.
-                ModelEvent::MessageCreate(e) => e.message.author.id != own_id,
+                DiscordEvent::MessageCreate(e) => e.message.author.id != own_id,
                 _ => true,
             })
             .await
@@ -226,7 +226,7 @@ impl ChannelUpdater {
     ) -> Result<()> {
         let prev_len = self.messages.len();
         match updater_event.0.as_ref() {
-            ModelEvent::MessageCreate(e) => {
+            DiscordEvent::MessageCreate(e) => {
                 // The collector filter already filtered out our own messages, so this is
                 // someone else; delete it.
                 e.message.delete(&self.ctx).await.with_context(|| {
@@ -236,7 +236,7 @@ impl ChannelUpdater {
                     )
                 })?;
             }
-            ModelEvent::MessageUpdate(e) => {
+            DiscordEvent::MessageUpdate(e) => {
                 // Others can only suppress embeds, any other edits are from the bot.
                 if let Some(flags) = e.flags {
                     if flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
@@ -253,10 +253,10 @@ impl ChannelUpdater {
                     }
                 }
             }
-            ModelEvent::MessageDelete(e) => {
+            DiscordEvent::MessageDelete(e) => {
                 self.messages.retain(|m| m.id != e.message_id);
             }
-            ModelEvent::MessageDeleteBulk(e) => {
+            DiscordEvent::MessageDeleteBulk(e) => {
                 self.messages.retain(|m| !e.ids.contains(&m.id));
             }
             e => error!("Collector got unexpected event: {:?}", e),
