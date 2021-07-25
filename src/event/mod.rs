@@ -30,6 +30,8 @@ use std::{
 use tokio::sync::RwLock;
 use tracing::error;
 
+mod alert;
+
 pub use crate::embed::EventEmbedMessage;
 
 /// Unique identifier for an Event.

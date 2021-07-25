@@ -262,6 +262,7 @@ dependencies = [
  "futures",
  "itertools",
  "lazy_static",
+ "parking_lot",
  "paste",
  "rand 0.8.3",
  "serde",
