@@ -105,7 +105,13 @@ pub async fn ask_for_description(
     {
         // Immediately delete the user's (public) message since the rest of the bot interaction
         // is ephemeral.
-        reply.delete(&ctx).await?;
+        if let Err(err) = reply.delete(&ctx).await {
+            // If the user is doing this in an event channel, our delete will race with
+            // ChannelUpdater's delete, so ignore "Unknown Message" errors.
+            if !err.is_discord_json_error(DiscordJsonErrorCode::UnknownMessage) {
+                Err(err)?;
+            }
+        }
         Ok(Some(reply.content.clone()))
     } else {
         // Timed out waiting for the description, send a followup message so that the user can

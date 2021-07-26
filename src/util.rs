@@ -16,6 +16,7 @@ use serenity::{
         },
         prelude::*,
     },
+    prelude::*,
 };
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use tokio::fs::File;
@@ -316,5 +317,25 @@ impl MemberLike for (&User, &PartialMember) {
             .nick
             .as_deref()
             .unwrap_or_else(|| self.0.name.as_str())
+    }
+}
+
+// From https://discord.com/developers/docs/topics/opcodes-and-status-codes#json
+pub enum DiscordJsonErrorCode {
+    UnknownMessage = 10008,
+}
+
+pub trait SerenityErrorExt {
+    fn is_discord_json_error(&self, code: DiscordJsonErrorCode) -> bool;
+}
+
+impl SerenityErrorExt for SerenityError {
+    fn is_discord_json_error(&self, code: DiscordJsonErrorCode) -> bool {
+        if let SerenityError::Http(http_err) = self {
+            if let HttpError::UnsuccessfulRequest(err_resp) = http_err.as_ref() {
+                return err_resp.error.code == code as isize;
+            }
+        }
+        false
     }
 }

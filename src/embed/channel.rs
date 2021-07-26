@@ -1,4 +1,7 @@
-use crate::event::{Event, EventChange};
+use crate::{
+    event::{Event, EventChange},
+    util::*,
+};
 use anyhow::{format_err, Context as _, Result};
 use derivative::Derivative;
 use futures::prelude::*;
@@ -229,12 +232,19 @@ impl ChannelUpdater {
             DiscordEvent::MessageCreate(e) => {
                 // The collector filter already filtered out our own messages, so this is
                 // someone else; delete it.
-                e.message.delete(&self.ctx).await.with_context(|| {
-                    format!(
-                        "Failed to delete message {} in channel {}",
-                        e.message.id, self.channel
-                    )
-                })?;
+                if let Err(err) = e.message.delete(&self.ctx).await {
+                    // This message could be from a user replying with a description for an /lfg
+                    // command and ask_for_description() also deletes the message, so ignore
+                    // "Unknown Message" errors.
+                    if !err.is_discord_json_error(DiscordJsonErrorCode::UnknownMessage) {
+                        Err(err).with_context(|| {
+                            format!(
+                                "Failed to delete message {} in channel {}",
+                                e.message.id, self.channel
+                            )
+                        })?;
+                    }
+                }
             }
             DiscordEvent::MessageUpdate(e) => {
                 // Others can only suppress embeds, any other edits are from the bot.
