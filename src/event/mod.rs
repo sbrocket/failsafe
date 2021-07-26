@@ -315,11 +315,11 @@ impl Event {
                 let names: String = group
                     .iter()
                     .map(|(user, alt)| {
-                        let name = user.name.as_str();
+                        let name = user.id.mention();
                         if *alt {
                             return format!("*{} (alt)*", name);
                         }
-                        name.to_owned()
+                        name.to_string()
                     })
                     .pad_using(1, |_| "None".to_owned())
                     .join(", ");
@@ -333,14 +333,14 @@ impl Event {
 
         let alt_names = self
             .extra_alts()
-            .map(|user| user.name.as_str())
-            .pad_using(1, |_| "None")
+            .map(|user| user.id.mention().to_string())
+            .pad_using(1, |_| "None".to_owned())
             .join(", ");
         let maybe_names = self
             .maybe
             .iter()
-            .map(|user| user.name.as_str())
-            .pad_using(1, |_| "None")
+            .map(|user| user.id.mention().to_string())
+            .pad_using(1, |_| "None".to_owned())
             .join(", ");
         embed
             .field("Alternates", alt_names, true)
