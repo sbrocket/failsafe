@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Mutex, time::sleep};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Trait used to perform scheduled actions. Primarily this is implemented by EventManager, but this
 /// allows for a simpler fake for unit testing.
@@ -159,6 +159,7 @@ impl<T: TimeSource> EventScheduler<T> {
         let actions = initial_events
             .flat_map(|e| config.actions_for_event(e, &now))
             .collect();
+        debug!("Initial scheduled actions: {:?}", actions);
         EventScheduler {
             state: Arc::new(Mutex::new(EventSchedulerState {
                 actions,
@@ -179,7 +180,7 @@ impl<T: TimeSource> EventScheduler<T> {
             EventChange::Edited(event) | EventChange::Deleted(event) => {
                 state.actions.retain(|action| action.id != event.id);
             }
-            EventChange::Added(_) => {}
+            EventChange::Added(_) | EventChange::Alert(_) => {}
         }
         match change {
             EventChange::Added(event) | EventChange::Edited(event) => {
@@ -188,7 +189,7 @@ impl<T: TimeSource> EventScheduler<T> {
                     .actions
                     .extend(self.config.actions_for_event(event, &now));
             }
-            EventChange::Deleted(_) => {}
+            EventChange::Deleted(_) | EventChange::Alert(_) => {}
         }
 
         // Kick the scheduler loop so it can check for new actions.
@@ -252,9 +253,16 @@ impl<T: TimeSource> EventSchedulerState<T> {
                 info!("Skipped stale action: {}", next);
                 continue;
             }
-            if let Err(err) = handler.perform_action(&next).await {
-                error!("Error performing scheduled action ({}): {:?}", next, err);
-            }
+
+            // Performing actions will usually cause more EventChanges to be generated and passed to
+            // EventScheduler::event_changed, which would deadlock if we wait for the action to
+            // finish here.
+            let handler = handler.clone();
+            tokio::spawn(async move {
+                if let Err(err) = handler.perform_action(&next).await {
+                    error!("Error performing scheduled action ({}): {:?}", next, err);
+                }
+            });
         }
 
         match self.actions.peek() {

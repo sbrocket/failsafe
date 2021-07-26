@@ -41,7 +41,7 @@ impl GuildManager {
             info!("Added to guild {}", guild_id);
             match self.add_guild(ctx.clone(), guild_id).await {
                 Ok(mgr) => {
-                    managers.insert(guild_id, Arc::new(mgr));
+                    managers.insert(guild_id, mgr);
                 }
                 Err(err) => errors.push(err),
             }
@@ -56,7 +56,7 @@ impl GuildManager {
         Ok(())
     }
 
-    async fn add_guild(&self, ctx: Context, guild_id: GuildId) -> Result<EventManager> {
+    async fn add_guild(&self, ctx: Context, guild_id: GuildId) -> Result<Arc<EventManager>> {
         let http = ctx.http.clone();
         let event_manager = EventManager::new(
             ctx,

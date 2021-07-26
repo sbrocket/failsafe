@@ -328,6 +328,9 @@ impl ChannelUpdater {
                 {
                     return update;
                 }
+                if message.content != event.alert_message().unwrap_or_default() {
+                    return update;
+                }
                 if message.embeds.len() != 1 {
                     return update;
                 }
@@ -356,10 +359,12 @@ impl ChannelUpdater {
                 let message = self
                     .channel
                     .send_message(&self.ctx, |msg| {
-                        msg.set_embed(event.as_embed()).components(|c| {
-                            *c = event.event_buttons();
-                            c
-                        })
+                        msg.set_embed(event.as_embed())
+                            .components(|c| {
+                                *c = event.event_buttons();
+                                c
+                            })
+                            .content(event.alert_message().unwrap_or_default())
                     })
                     .await
                     .context("Failed to send new message to channel")?;
@@ -378,6 +383,7 @@ impl ChannelUpdater {
                                 c
                             })
                             .suppress_embeds(false)
+                            .content(event.alert_message().unwrap_or_default())
                     })
                     .await
                     .context("Failed to edit message")?;
@@ -418,7 +424,9 @@ impl ChannelEvents {
         // Check if there's an old event with a matching ID that needs to be removed. May not
         // exist if previously did not meet filter.
         let old_idx = match &change {
-            EventChange::Deleted(change) | EventChange::Edited(change) => {
+            EventChange::Deleted(change)
+            | EventChange::Edited(change)
+            | EventChange::Alert(change) => {
                 // This might be better with drain_filter() once that is stabilized.
                 let old = self
                     .events
@@ -439,7 +447,9 @@ impl ChannelEvents {
 
         // Insert only if event still meets filter.
         let new_idx = match change {
-            EventChange::Added(change) | EventChange::Edited(change) => {
+            EventChange::Added(change)
+            | EventChange::Edited(change)
+            | EventChange::Alert(change) => {
                 if (self.filter)(&change) {
                     let id = change.id;
                     self.events.insert(change);

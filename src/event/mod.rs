@@ -12,6 +12,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
+    async_trait,
     builder::{CreateActionRow, CreateButton, CreateComponents, CreateEmbed},
     model::{interactions::message_component::ButtonStyle, prelude::*},
     prelude::*,
@@ -26,13 +27,26 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, info};
 
 mod alert;
 
 pub use crate::embed::EventEmbedMessage;
+
+// Debugging features, enabled through environment variables.
+lazy_static! {
+    // Allows the same user to join an event multiple times, to enable testing with a small number
+    // of users.
+    static ref ALLOW_DUPLICATE_JOIN: bool =
+        std::env::var("ALLOW_DUPLICATE_JOIN").map_or(false, |v| v == "1");
+
+    // Don't start the EventScheduler so that scheduled event actions don't occur.
+    static ref DISABLE_EVENT_SCHEDULER: bool =
+        std::env::var("DISABLE_EVENT_SCHEDULER").map_or(false, |v| v == "1");
+}
 
 /// Unique identifier for an Event.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -198,12 +212,6 @@ impl Ord for Event {
     }
 }
 
-// This is a debugging feature, to allow testing the bot with a small number of users.
-lazy_static! {
-    static ref ALLOW_DUPLICATE_JOIN: bool =
-        std::env::var("ALLOW_DUPLICATE_JOIN").map_or(false, |v| v == "1");
-}
-
 impl Event {
     /// Get the current datetime.
     pub fn datetime(&self) -> DateTime<Tz> {
@@ -268,7 +276,6 @@ impl Event {
         combined
             .chunks(chunk_size)
             .take_while(|group| group.len() == chunk_size || !group[0].1)
-            .pad_using(1, |_| &[])
             .map(Vec::from)
             .collect()
     }
@@ -300,7 +307,8 @@ impl Event {
             .timestamp(&self.datetime.with_timezone(&Utc));
 
         self.confirmed_groups()
-            .iter()
+            .into_iter()
+            .pad_using(1, |_| vec![])
             .enumerate()
             .for_each(|(i, group)| {
                 let names: String = group
@@ -340,6 +348,34 @@ impl Event {
         embed
     }
 
+    pub fn alert_message(&self) -> Option<String> {
+        if !self.alerted {
+            return None;
+        }
+
+        let groups = self
+            .confirmed_groups()
+            .into_iter()
+            .enumerate()
+            .map(|(i, group)| {
+                format!(
+                    "Group {}: {}",
+                    i + 1,
+                    group.iter().map(|(user, _)| user.id.mention()).join(", "),
+                )
+            })
+            .join("\n");
+
+        if groups.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "Alert Protocol initiated for LFG *{}* ({})\n{}",
+                self.id, self.activity, groups,
+            ))
+        }
+    }
+
     pub fn event_buttons(&self) -> CreateComponents {
         let mut components = CreateComponents::default();
         let mut row = CreateActionRow::default();
@@ -364,9 +400,22 @@ impl Event {
 
 #[derive(Debug, Clone)]
 pub enum EventChange {
+    /// New event added.
     Added(Arc<Event>),
+    /// Event deleted.
     Deleted(Arc<Event>),
+    /// Event edited by user.
     Edited(Arc<Event>),
+    /// Alert protocol initiated.
+    Alert(Arc<Event>),
+}
+
+// TODO: Use a hardcoded config for now, but this should become per-guild config.
+lazy_static! {
+    static ref SCHEDULER_CONFIG: alert::EventSchedulerConfig = alert::EventSchedulerConfig {
+        alert: Duration::from_secs(10 * 60),
+        cleanup: Duration::from_secs(30 * 60),
+    };
 }
 
 type EventsCollection = BTreeMap<EventId, Arc<Event>>;
@@ -379,6 +428,7 @@ struct EventManagerState {
     events_store: PersistentStore<EventsCollection>,
     next_id: HashMap<Activity, u8>,
     embed_manager: Option<EmbedManager>,
+    event_scheduler: alert::EventScheduler,
 }
 
 impl EventManagerState {
@@ -387,13 +437,26 @@ impl EventManagerState {
         let events: EventsCollection = events_store.load().await?;
 
         let embed_manager = Some(EmbedManager::new(ctx, store_builder, events.values()).await?);
+        let event_scheduler = alert::EventScheduler::new(events.values(), *SCHEDULER_CONFIG);
 
         Ok(EventManagerState {
             events,
             events_store,
             next_id: Default::default(),
             embed_manager,
+            event_scheduler,
         })
+    }
+
+    #[cfg(test)]
+    pub fn default(events_store: PersistentStore<EventsCollection>) -> Self {
+        EventManagerState {
+            events: Default::default(),
+            events_store,
+            next_id: Default::default(),
+            embed_manager: None,
+            event_scheduler: alert::EventScheduler::new(std::iter::empty(), *SCHEDULER_CONFIG),
+        }
     }
 
     pub async fn modify_event<F, T>(&mut self, f: F) -> Result<T>
@@ -403,6 +466,7 @@ impl EventManagerState {
         let (change, ret) = f(&mut self.events)?;
         if let Some(change) = change {
             self.events_store.store(&self.events).await?;
+            self.event_scheduler.event_changed(&change).await;
             if let Some(mgr) = &mut self.embed_manager {
                 mgr.event_changed(change).await?;
             }
@@ -448,13 +512,24 @@ pub struct EventManager {
 }
 
 impl EventManager {
-    pub async fn new(ctx: Context, store_builder: PersistentStoreBuilder) -> Result<Self> {
+    pub async fn new(ctx: Context, store_builder: PersistentStoreBuilder) -> Result<Arc<Self>> {
         let state = RwLock::new(EventManagerState::load(ctx, &store_builder).await?);
-        Ok(EventManager {
+        let mgr = Arc::new(EventManager {
             store_builder,
             state,
             removed_from_guild: Default::default(),
-        })
+        });
+        // We should be able to acquire the state lock immediately, nothing else could have acquired
+        // it yet. We can't Arc::get_mut + RwLock::get_mut because then we wouldn't be able to
+        // create the Weak.
+        if !*DISABLE_EVENT_SCHEDULER {
+            mgr.state
+                .try_read()
+                .expect("Should be able to acquire state lock")
+                .event_scheduler
+                .start(Arc::downgrade(&mgr));
+        }
+        Ok(mgr)
     }
 
     /// A test-only, async Default-like method.
@@ -467,12 +542,7 @@ impl EventManager {
         let events_store = store_builder.build(EVENTS_STORE_NAME).await.unwrap();
         EventManager {
             store_builder,
-            state: RwLock::new(EventManagerState {
-                events: Default::default(),
-                events_store,
-                next_id: Default::default(),
-                embed_manager: None,
-            }),
+            state: RwLock::new(EventManagerState::default(events_store)),
             removed_from_guild: Default::default(),
         }
     }
@@ -580,6 +650,60 @@ impl EventManager {
             .await
     }
 
+    async fn alert_event(&self, id: EventId) -> Result<()> {
+        info!("Triggering alert protocol for {}", id);
+
+        let mut state = self.state.write().await;
+        state
+            .modify_event(|events| match events.get_mut(&id) {
+                Some(mut event) => {
+                    Arc::make_mut(&mut event).alerted = true;
+                    Ok((Some(EventChange::Alert(event.clone())), ()))
+                }
+                None => Err(format_err!("Event {} didn't exist to alert", id)),
+            })
+            .await
+    }
+
+    async fn cleanup_event(&self, id: EventId) -> Result<()> {
+        info!("Cleaning up event {}", id);
+
+        let mut state = self.state.write().await;
+        let old = state
+            .modify_event(|events| {
+                let event = events
+                    .remove(&id)
+                    .ok_or(format_err!("Event {} does not exist", id))?;
+                Ok((Some(EventChange::Deleted(event.clone())), event))
+            })
+            .await?;
+
+        if old.recur {
+            info!("Creating event recurrence from {}", id);
+            let id = state.next_id(old.activity)?;
+            let new = Arc::new(Event {
+                id,
+                activity: old.activity,
+                datetime: old.datetime + chrono::Duration::weeks(1),
+                description: old.description.clone(),
+                group_size: old.group_size,
+                recur: true,
+                creator: old.creator.clone(),
+                confirmed: vec![],
+                alternates: vec![],
+                maybe: vec![],
+                alerted: false,
+            });
+            state
+                .modify_event(|events| {
+                    events.insert(id, new.clone());
+                    Ok((Some(EventChange::Added(new)), ()))
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Adds a new message that contains this event's embed and which should be kept up to date as
     /// the event is modified.
     pub async fn keep_embed_updated(
@@ -600,6 +724,24 @@ impl EventManager {
     pub async fn next_id(&self, activity: Activity) -> Result<EventId> {
         let mut state = self.state.write().await;
         state.next_id(activity)
+    }
+}
+
+#[async_trait]
+impl alert::ScheduledActionHandler for EventManager {
+    async fn with_event_for_id<F, T>(&self, id: EventId, func: F) -> Option<T>
+    where
+        F: FnOnce(&Event) -> T + Send,
+    {
+        let state = self.state.read().await;
+        state.events.get(&id).map(|event| func(event))
+    }
+
+    async fn perform_action(&self, action: &alert::ScheduledAction) -> Result<()> {
+        match action.action {
+            alert::EventAction::Alert => self.alert_event(action.id).await,
+            alert::EventAction::Cleanup => self.cleanup_event(action.id).await,
+        }
     }
 }
 

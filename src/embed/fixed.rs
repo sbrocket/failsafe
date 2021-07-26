@@ -42,6 +42,7 @@ impl EmbedMessages {
     /// Asychronously (in a spawned task) update the embeds in tracked messages.
     pub fn start_updating_embeds(&self, http: impl AsRef<Arc<Http>>, event: &Event) {
         let embed = event.as_embed();
+        let alert_message = event.alert_message().unwrap_or_default();
         let event_id = event.id;
         let http = http.as_ref().clone();
         let messages = self.messages.clone();
@@ -51,8 +52,7 @@ impl EmbedMessages {
             let event_messages = messages.get(&event_id).unwrap_or(&empty);
 
             future::join_all(event_messages.iter().filter(|m| !m.expired()).map(|msg| {
-                let http = &http;
-                let embed = &embed;
+                let (http, embed, alert_message) = (&http, &embed, &alert_message);
                 async move {
                     match msg {
                         EventEmbedMessage::Normal(chan_id, msg_id) => {
@@ -62,6 +62,7 @@ impl EmbedMessages {
                                         *e = embed.clone();
                                         e
                                     })
+                                    .content(alert_message.clone())
                                 })
                                 .await
                         }

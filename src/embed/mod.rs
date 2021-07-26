@@ -111,7 +111,7 @@ impl EmbedManager {
 
         match change {
             EventChange::Added(_) => {}
-            EventChange::Edited(event) => {
+            EventChange::Edited(event) | EventChange::Alert(event) => {
                 self.embed_messages.start_updating_embeds(&self.ctx, &event)
             }
             EventChange::Deleted(event) => {
