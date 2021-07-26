@@ -169,8 +169,9 @@ pub struct Event {
     pub confirmed: Vec<EventMember>,
     pub alternates: Vec<EventMember>,
     pub maybe: Vec<EventMember>,
-    /// Alert protocol initiated. This gets reset if the Event's time changes.
-    pub alerted: bool,
+    /// If alert_message is Some, alert protocol has been triggered for this event. This gets reset
+    /// if the Event's time changes.
+    alert_message: Option<String>,
 }
 
 #[cfg(test)]
@@ -192,7 +193,7 @@ impl Default for Event {
             confirmed: vec![creator],
             alternates: vec![],
             maybe: vec![],
-            alerted: false,
+            alert_message: None,
         }
     }
 }
@@ -220,7 +221,7 @@ impl Event {
 
     pub fn set_datetime(&mut self, new: DateTime<Tz>) {
         self.datetime = new;
-        self.alerted = false;
+        self.alert_message = None;
     }
 
     // TODO: Add a limit on how many people can join an event.
@@ -348,14 +349,14 @@ impl Event {
         embed
     }
 
-    pub fn alert_message(&self) -> Option<String> {
-        if !self.alerted {
-            return None;
-        }
-
+    pub fn trigger_alert_protocol(&mut self) {
+        // We generate and save the alert protocol message when it is triggered, which avoids it
+        // changing if people join/leave after it is triggered.
         let groups = self
             .confirmed_groups()
             .into_iter()
+            // Filter out any partial groups
+            .filter(|group| group.len() == self.group_size as usize)
             .enumerate()
             .map(|(i, group)| {
                 format!(
@@ -366,14 +367,23 @@ impl Event {
             })
             .join("\n");
 
-        if groups.is_empty() {
-            None
+        let message = if groups.is_empty() {
+            String::new()
         } else {
-            Some(format!(
-                "Alert Protocol initiated for LFG *{}* ({})\n{}",
+            format!(
+                "Alert Protocol initiated for LFG **{}** ({})\n{}",
                 self.id, self.activity, groups,
-            ))
-        }
+            )
+        };
+        self.alert_message = Some(message);
+    }
+
+    pub fn alerted(&self) -> bool {
+        self.alert_message.is_some()
+    }
+
+    pub fn alert_protocol_message(&self) -> Option<String> {
+        self.alert_message.clone()
     }
 
     pub fn event_buttons(&self) -> CreateComponents {
@@ -574,7 +584,7 @@ impl EventManager {
             confirmed: vec![creator],
             alternates: vec![],
             maybe: vec![],
-            alerted: false,
+            alert_message: None,
         });
 
         state
@@ -657,7 +667,7 @@ impl EventManager {
         state
             .modify_event(|events| match events.get_mut(&id) {
                 Some(mut event) => {
-                    Arc::make_mut(&mut event).alerted = true;
+                    Arc::make_mut(&mut event).trigger_alert_protocol();
                     Ok((Some(EventChange::Alert(event.clone())), ()))
                 }
                 None => Err(format_err!("Event {} didn't exist to alert", id)),
@@ -692,7 +702,7 @@ impl EventManager {
                 confirmed: vec![],
                 alternates: vec![],
                 maybe: vec![],
-                alerted: false,
+                alert_message: None,
             });
             state
                 .modify_event(|events| {

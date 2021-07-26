@@ -328,7 +328,7 @@ impl ChannelUpdater {
                 {
                     return update;
                 }
-                if message.content != event.alert_message().unwrap_or_default() {
+                if message.content != event.alert_protocol_message().unwrap_or_default() {
                     return update;
                 }
                 if message.embeds.len() != 1 {
@@ -364,7 +364,7 @@ impl ChannelUpdater {
                                 *c = event.event_buttons();
                                 c
                             })
-                            .content(event.alert_message().unwrap_or_default())
+                            .content(event.alert_protocol_message().unwrap_or_default())
                     })
                     .await
                     .context("Failed to send new message to channel")?;
@@ -383,7 +383,7 @@ impl ChannelUpdater {
                                 c
                             })
                             .suppress_embeds(false)
-                            .content(event.alert_message().unwrap_or_default())
+                            .content(event.alert_protocol_message().unwrap_or_default())
                     })
                     .await
                     .context("Failed to edit message")?;

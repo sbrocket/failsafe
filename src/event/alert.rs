@@ -100,7 +100,7 @@ impl EventSchedulerConfig {
         // - We don't alert for events that just need to be cleaned up, say if the bot was down when
         //   the event occurred.
         let mut actions = Vec::with_capacity(2);
-        if !event.alerted && &event.datetime() >= now {
+        if !event.alerted() && &event.datetime() >= now {
             actions.push(ScheduledAction::new(
                 event,
                 -SignedDuration::from_std(self.alert).unwrap(),
@@ -459,7 +459,7 @@ mod test {
                 Entry::Vacant(_) => Err(format_err!("No event with id {} exists", action.id)),
             }?;
             match action.action {
-                EventAction::Alert => Arc::make_mut(entry.get_mut()).alerted = true,
+                EventAction::Alert => Arc::make_mut(entry.get_mut()).trigger_alert_protocol(),
                 EventAction::Cleanup => {
                     entry.remove();
                 }

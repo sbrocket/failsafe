@@ -42,7 +42,7 @@ impl EmbedMessages {
     /// Asychronously (in a spawned task) update the embeds in tracked messages.
     pub fn start_updating_embeds(&self, http: impl AsRef<Arc<Http>>, event: &Event) {
         let embed = event.as_embed();
-        let alert_message = event.alert_message().unwrap_or_default();
+        let alert_message = event.alert_protocol_message().unwrap_or_default();
         let event_id = event.id;
         let http = http.as_ref().clone();
         let messages = self.messages.clone();
