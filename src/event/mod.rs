@@ -8,12 +8,14 @@ use crate::{
 use anyhow::{format_err, Context as _, Error, Result};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
+use derivative::Derivative;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serenity::{
     async_trait,
     builder::{CreateActionRow, CreateButton, CreateComponents, CreateEmbed},
+    http::CacheHttp,
     model::{interactions::message_component::ButtonStyle, prelude::*},
     prelude::*,
     utils::Color,
@@ -349,14 +351,16 @@ impl Event {
         embed
     }
 
-    pub fn trigger_alert_protocol(&mut self) {
+    pub fn trigger_alert_protocol(&mut self) -> Vec<EventMember> {
         // We generate and save the alert protocol message when it is triggered, which avoids it
         // changing if people join/leave after it is triggered.
         let groups = self
             .confirmed_groups()
             .into_iter()
             // Filter out any partial groups
-            .filter(|group| group.len() == self.group_size as usize)
+            .filter(|group| group.len() == self.group_size as usize);
+        let groups_str = groups
+            .clone()
             .enumerate()
             .map(|(i, group)| {
                 format!(
@@ -367,15 +371,22 @@ impl Event {
             })
             .join("\n");
 
-        let message = if groups.is_empty() {
+        let members = groups
+            .flat_map(|group| group.into_iter().map(|(member, _)| member))
+            .cloned()
+            .collect();
+
+        let message = if groups_str.is_empty() {
             String::new()
         } else {
             format!(
                 "Alert Protocol initiated for LFG **{}** ({})\n{}",
-                self.id, self.activity, groups,
+                self.id, self.activity, groups_str,
             )
         };
         self.alert_message = Some(message);
+
+        members
     }
 
     pub fn alerted(&self) -> bool {
@@ -514,8 +525,11 @@ impl EventManagerState {
 }
 
 /// Manages a single server's worth of events.
-#[derive(Debug)]
-pub struct EventManager {
+#[derive(Derivative)]
+#[derivative(Debug)]
+pub struct EventManager<C: CacheHttp = Context> {
+    #[derivative(Debug = "ignore")]
+    ctx: C,
     store_builder: PersistentStoreBuilder,
     state: RwLock<EventManagerState>,
     removed_from_guild: AtomicBool,
@@ -523,8 +537,9 @@ pub struct EventManager {
 
 impl EventManager {
     pub async fn new(ctx: Context, store_builder: PersistentStoreBuilder) -> Result<Arc<Self>> {
-        let state = RwLock::new(EventManagerState::load(ctx, &store_builder).await?);
+        let state = RwLock::new(EventManagerState::load(ctx.clone(), &store_builder).await?);
         let mgr = Arc::new(EventManager {
+            ctx,
             store_builder,
             state,
             removed_from_guild: Default::default(),
@@ -544,19 +559,22 @@ impl EventManager {
 
     /// A test-only, async Default-like method.
     #[cfg(test)]
-    pub async fn default() -> Self {
+    pub async fn default() -> EventManager<serenity::CacheAndHttp> {
         let tempdir = tempdir::TempDir::new("EventManager").expect("Failed to create tempdir");
         let store_builder = PersistentStoreBuilder::new(tempdir.into_path())
             .await
             .expect("Failed to create PersistentStoreBuilder");
         let events_store = store_builder.build(EVENTS_STORE_NAME).await.unwrap();
         EventManager {
+            ctx: Default::default(),
             store_builder,
             state: RwLock::new(EventManagerState::default(events_store)),
             removed_from_guild: Default::default(),
         }
     }
+}
 
+impl<C: CacheHttp> EventManager<C> {
     // Bot was removed from the guild for this EventManager, delete state.
     pub fn removed_from_guild(&self) {
         self.removed_from_guild.store(true, Ordering::Relaxed)
@@ -664,15 +682,31 @@ impl EventManager {
         info!("Triggering alert protocol for {}", id);
 
         let mut state = self.state.write().await;
-        state
+        let (event, members) = state
             .modify_event(|events| match events.get_mut(&id) {
                 Some(mut event) => {
-                    Arc::make_mut(&mut event).trigger_alert_protocol();
-                    Ok((Some(EventChange::Alert(event.clone())), ()))
+                    let members = Arc::make_mut(&mut event).trigger_alert_protocol();
+                    Ok((
+                        Some(EventChange::Alert(event.clone())),
+                        (event.clone(), members),
+                    ))
                 }
                 None => Err(format_err!("Event {} didn't exist to alert", id)),
             })
-            .await
+            .await?;
+
+        let message = event
+            .alert_protocol_message()
+            .ok_or(format_err!("Missing alert message??"))?;
+        for member in members {
+            member
+                .id
+                .create_dm_channel(&self.ctx)
+                .await?
+                .send_message(&self.ctx.http(), |msg| msg.content(message.clone()))
+                .await?;
+        }
+        Ok(())
     }
 
     async fn cleanup_event(&self, id: EventId) -> Result<()> {
@@ -755,7 +789,7 @@ impl alert::ScheduledActionHandler for EventManager {
     }
 }
 
-impl Drop for EventManager {
+impl<C: CacheHttp> Drop for EventManager<C> {
     fn drop(&mut self) {
         if self.removed_from_guild.load(Ordering::Relaxed) {
             let store_builder = self.store_builder.clone();
@@ -777,8 +811,8 @@ mod tests {
     use super::{Event, *};
     use std::iter;
 
-    async fn add_events_to_manager(
-        manager: &EventManager,
+    async fn add_events_to_manager<C: CacheHttp>(
+        manager: &EventManager<C>,
         activity: Activity,
         indexes: impl IntoIterator<Item = u8>,
     ) {

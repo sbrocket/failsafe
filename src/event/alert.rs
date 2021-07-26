@@ -459,7 +459,9 @@ mod test {
                 Entry::Vacant(_) => Err(format_err!("No event with id {} exists", action.id)),
             }?;
             match action.action {
-                EventAction::Alert => Arc::make_mut(entry.get_mut()).trigger_alert_protocol(),
+                EventAction::Alert => {
+                    Arc::make_mut(entry.get_mut()).trigger_alert_protocol();
+                }
                 EventAction::Cleanup => {
                     entry.remove();
                 }
