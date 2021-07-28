@@ -130,7 +130,7 @@ impl EventChannel {
 }
 
 /// A single update to an event channel.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ChannelUpdate<'a> {
     /// Create a new message at the end of this channel for the given event.
     New { event: &'a Arc<Event> },
@@ -354,11 +354,16 @@ impl ChannelUpdater {
 
         // Only new or delete will yield any elements, not both, but this lets us simply chain the
         // iterators together.
-        let delete = (events.len()..self.messages.len()).map(|idx| ChannelUpdate::Delete { idx });
+        let delete_range = events.len()..self.messages.len();
+        let delete = std::iter::repeat(ChannelUpdate::Delete {
+            idx: delete_range.start,
+        })
+        .take(delete_range.len());
         let new = events
             .iter()
             .skip(self.messages.len())
             .map(|event| ChannelUpdate::New { event });
+        assert!(delete_range.len() == 0 || new.len() == 0);
 
         updates.chain(delete).chain(new).collect()
     }
