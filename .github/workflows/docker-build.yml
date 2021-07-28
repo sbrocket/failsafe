@@ -35,10 +35,10 @@ jobs:
         uses: actions/cache@v2
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ steps.toolchain.outputs.rustc_hash }}-${{ hashFiles('**/Cargo.toml') }}-${{ github.sha }}
+          # TODO: Include rustc hash in cache key, need to make sure same as Dockerfile is using
+          key: ${{ runner.os }}-buildx-${{ hashFiles('**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-buildx-${{ steps.toolchain.outputs.rustc_hash }}-${{ hashFiles('**/Cargo.toml') }}-
-            ${{ runner.os }}-buildx-${{ steps.toolchain.outputs.rustc_hash }}-
+            ${{ runner.os }}-buildx-${{ hashFiles('**/Cargo.toml') }}-
             ${{ runner.os }}-buildx-
 
       - name: Log into registry ${{ env.REGISTRY }}
