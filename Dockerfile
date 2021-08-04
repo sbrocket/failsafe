@@ -27,4 +27,5 @@ RUN cargo build --release --bin failsafe
 
 FROM alpine:3.14 as runtime
 COPY --from=builder /app/target/release/failsafe /usr/local/bin
+USER failsafe
 ENTRYPOINT ["/usr/local/bin/failsafe"]
