@@ -131,9 +131,13 @@ where
             .context("Failed to flush store file")?;
         std::mem::drop(tempfile);
 
-        fs::rename(temppath, &self.path)
+        // Copy is used instead of rename in case the paths are on different devices/mounts
+        fs::copy(&temppath, &self.path)
             .await
             .context("Failed to atomically replace event store")?;
+        fs::remove_file(temppath)
+            .await
+            .context("Failed to delete temp file")?;
 
         // Reopen the file now that its been replaced.
         *file = open_read_append(&self.path)
