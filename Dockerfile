@@ -27,5 +27,9 @@ RUN cargo build --release --bin failsafe
 
 FROM alpine:3.14 as runtime
 COPY --from=builder /app/target/release/failsafe /usr/local/bin
+# These UIDs and GIDs match the host system, configured through cloud-init, to ensure that bind
+# mount permissions behave as expected.
+RUN addgroup -g 61000 -S failsafe && adduser -g 61000 -S failsafe -G failsafe \
+    && addgroup -g 62000 -S storage_grp && addgroup failsafe storage_grp
 USER failsafe
 ENTRYPOINT ["/usr/local/bin/failsafe"]
