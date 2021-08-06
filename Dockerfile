@@ -27,4 +27,8 @@ RUN cargo build --release --bin failsafe
 
 FROM alpine:3.14 as runtime
 COPY --from=builder /app/target/release/failsafe /usr/local/bin
+# Within the container, run as an unprivileged user with a fixed uid. The fixed uid is used by the
+# host system to set up correct permissions for mapped volumes.
+RUN addgroup -g 128 -S failsafe-bot && adduser -g 128 -S failsafe-bot -G failsafe-bot
+USER failsafe-bot
 ENTRYPOINT ["/usr/local/bin/failsafe"]
