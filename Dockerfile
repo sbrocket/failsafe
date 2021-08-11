@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.53.0-alpine
+ARG RUST_VERSION=latest
 
 FROM rust:${RUST_VERSION} as base
 WORKDIR /app
@@ -25,10 +25,13 @@ COPY --from=cacher /app/target target
 COPY --from=cacher $CARGO_HOME $CARGO_HOME
 RUN cargo build --release --bin failsafe
 
-FROM alpine:3.14 as runtime
+FROM ubuntu:20.04 as runtime
 COPY --from=builder /app/target/release/failsafe /usr/local/bin
+# dumb-init is used so that failsafe can handle signals normally, instead of getting the special PID
+# 1 behavior
+RUN apt-get update && apt-get install -y dumb-init && rm -rf /var/lib/apt/lists/*
 # Within the container, run as an unprivileged user with a fixed uid. The fixed uid is used by the
 # host system to set up correct permissions for mapped volumes.
-RUN addgroup -g 128 -S failsafe-bot && adduser -g 128 -S failsafe-bot -G failsafe-bot
+RUN adduser --system --uid 128 --group failsafe-bot
 USER 128:128
-ENTRYPOINT ["/usr/local/bin/failsafe"]
+ENTRYPOINT ["/usr/bin/dumb-init", "/usr/local/bin/failsafe"]
