@@ -1,6 +1,7 @@
 use crate::{
     activity::Activity,
     embed::EmbedManager,
+    guild::GuildConfig,
     store::{PersistentStore, PersistentStoreBuilder},
     time::serialize_datetime_tz,
     util::*,
@@ -453,11 +454,17 @@ struct EventManagerState {
 }
 
 impl EventManagerState {
-    pub async fn load(ctx: Context, store_builder: &PersistentStoreBuilder) -> Result<Self> {
+    pub async fn load(
+        ctx: Context,
+        store_builder: &PersistentStoreBuilder,
+        config: GuildConfig,
+    ) -> Result<Self> {
         let events_store = store_builder.build(EVENTS_STORE_NAME).await?;
         let events: EventsCollection = events_store.load().await?;
 
-        let embed_manager = Some(EmbedManager::new(ctx, store_builder, events.values()).await?);
+        let embed_manager = Some(
+            EmbedManager::new(ctx, store_builder, config.embed_config, events.values()).await?,
+        );
         let event_scheduler = alert::EventScheduler::new(events.values(), *SCHEDULER_CONFIG);
 
         Ok(EventManagerState {
@@ -536,8 +543,13 @@ pub struct EventManager<C: CacheHttp = Context> {
 }
 
 impl EventManager {
-    pub async fn new(ctx: Context, store_builder: PersistentStoreBuilder) -> Result<Arc<Self>> {
-        let state = RwLock::new(EventManagerState::load(ctx.clone(), &store_builder).await?);
+    pub async fn new(
+        ctx: Context,
+        store_builder: PersistentStoreBuilder,
+        config: GuildConfig,
+    ) -> Result<Arc<Self>> {
+        let state =
+            RwLock::new(EventManagerState::load(ctx.clone(), &store_builder, config).await?);
         let mgr = Arc::new(EventManager {
             ctx,
             store_builder,

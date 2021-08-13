@@ -11,3 +11,4 @@
 /target
 *.md
 Dockerfile
+guild-config.toml

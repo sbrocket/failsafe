@@ -1,68 +1,48 @@
 use crate::{
-    activity::ActivityType,
     event::{Event, EventChange, EventId},
     store::{PersistentStore, PersistentStoreBuilder},
 };
 use anyhow::Result;
 use derivative::Derivative;
 use serenity::{model::id::ChannelId, prelude::*};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 mod channel;
 mod fixed;
 
 use channel::EventChannel;
+pub use channel::EventChannelFilterFn;
 pub use fixed::EventEmbedMessage;
 
-// TODO: Replace this hardcoded event channel configuration with commands to configure this.
-fn test_event_channels<'a, I>(ctx: &Context, initial_events: I) -> Vec<EventChannel>
-where
-    I: Iterator<Item = &'a Arc<Event>> + Clone,
-{
-    let mut v = Vec::new();
-    // #raid-lfg
-    v.push(EventChannel::new(
-        ctx.clone(),
-        ChannelId(853744114377687090),
-        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Raid),
-        initial_events.clone(),
-    ));
-    // #pve-lfg
-    v.push(EventChannel::new(
-        ctx.clone(),
-        ChannelId(853744129774452766),
-        Box::new(|e: &Event| match e.activity.activity_type() {
-            ActivityType::Dungeon
-            | ActivityType::Gambit
-            | ActivityType::ExoticQuest
-            | ActivityType::Seasonal
-            | ActivityType::Other => true,
-            _ => false,
-        }),
-        initial_events.clone(),
-    ));
-    // #pvp-lfg
-    v.push(EventChannel::new(
-        ctx.clone(),
-        ChannelId(853744160926597150),
-        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Crucible),
-        initial_events.clone(),
-    ));
-    // #special-lfg
-    v.push(EventChannel::new(
-        ctx.clone(),
-        ChannelId(853744175908257813),
-        Box::new(|e: &Event| e.activity.activity_type() == ActivityType::Custom),
-        initial_events.clone(),
-    ));
-    // #all-lfg
-    v.push(EventChannel::new(
-        ctx.clone(),
-        ChannelId(853744186545274880),
-        Box::new(|_: &Event| true),
-        initial_events,
-    ));
-    v
+#[derive(Default)]
+pub struct EmbedManagerConfig {
+    pub event_channels: HashMap<ChannelId, EventChannelFilterFn>,
+}
+
+impl std::fmt::Debug for EmbedManagerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(
+                self.event_channels
+                    .keys()
+                    .zip(std::iter::repeat("EventChannelFilterFn")),
+            )
+            .finish()
+    }
+}
+
+impl EmbedManagerConfig {
+    fn create_event_channels<'a, I>(self, ctx: &Context, initial_events: I) -> Vec<EventChannel>
+    where
+        I: Iterator<Item = &'a Arc<Event>> + Clone,
+    {
+        self.event_channels
+            .into_iter()
+            .map(|(chan_id, filter)| {
+                EventChannel::new(ctx.clone(), chan_id, filter, initial_events.clone())
+            })
+            .collect()
+    }
 }
 
 const STORE_NAME: &str = "embeds.json";
@@ -87,6 +67,7 @@ impl EmbedManager {
     pub async fn new<'a, I>(
         ctx: Context,
         store_builder: &PersistentStoreBuilder,
+        config: EmbedManagerConfig,
         initial_events: I,
     ) -> Result<Self>
     where
@@ -95,7 +76,7 @@ impl EmbedManager {
         let store = store_builder.build(STORE_NAME).await?;
         let embed_messages = store.load().await?;
 
-        let event_channels = test_event_channels(&ctx, initial_events);
+        let event_channels = config.create_event_channels(&ctx, initial_events);
         Ok(EmbedManager {
             ctx,
             event_channels,

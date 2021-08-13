@@ -1,4 +1,4 @@
-use guild::GuildManager;
+use crate::{guild::GuildManager, store::PersistentStoreBuilder};
 use serenity::{
     async_trait,
     model::{
@@ -10,7 +10,6 @@ use serenity::{
     prelude::*,
 };
 use std::sync::Arc;
-use store::PersistentStoreBuilder;
 use tracing::{debug, error, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -111,7 +110,9 @@ async fn main() {
     let store_builder = PersistentStoreBuilder::new(event_store)
         .await
         .expect("Failed to create PersistentStoreBuilder");
-    let guild_manager = GuildManager::new(store_builder);
+    let guild_config_file = std::env::var("GUILD_CONFIG_FILE").expect("Missing $GUILD_CONFIG_FILE");
+    let guild_manager =
+        GuildManager::new(store_builder, guild_config_file).expect("Failed to create GuildManager");
 
     let mut client = Client::builder(&token)
         .application_id(app_id)

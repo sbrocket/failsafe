@@ -22,6 +22,8 @@ use tracing::{debug, error, warn};
 const CHANNEL_UPDATER_DELAY_PER_RETRY: u64 = 5;
 const CHANNEL_UPDATER_DELAY_CAP: u64 = 60;
 
+pub type EventChannelFilterFn = Box<dyn Fn(&Event) -> bool + Send + Sync + 'static>;
+
 /// Wraps a single "event channel", i.e. a channel that events are automatically posted to based on
 /// a filter.
 #[derive(Derivative)]
@@ -31,14 +33,13 @@ pub struct EventChannel {
 }
 
 impl EventChannel {
-    pub fn new<'a, F, I>(
+    pub fn new<'a, I>(
         ctx: Context,
         channel: ChannelId,
-        filter: Box<F>,
+        filter: EventChannelFilterFn,
         initial_events: I,
     ) -> Self
     where
-        F: FnMut(&Event) -> bool + Send + Sync + 'static,
         I: Iterator<Item = &'a Arc<Event>> + Clone,
     {
         let events = ChannelEvents::new(filter, initial_events);
@@ -416,16 +417,15 @@ impl ChannelUpdater {
 }
 
 struct ChannelEvents {
-    filter: Box<dyn FnMut(&Event) -> bool + Send + Sync + 'static>,
+    filter: EventChannelFilterFn,
 
     // Note that this relies on Event's Ord implementation that orders by event datetime.
     events: BTreeSet<Arc<Event>>,
 }
 
 impl ChannelEvents {
-    pub fn new<'a, F, I>(mut filter: Box<F>, initial_events: I) -> Self
+    pub fn new<'a, I>(filter: EventChannelFilterFn, initial_events: I) -> Self
     where
-        F: FnMut(&Event) -> bool + Send + Sync + 'static,
         I: Iterator<Item = &'a Arc<Event>> + Clone,
     {
         let events = initial_events.filter(|e| filter(e)).cloned().collect();

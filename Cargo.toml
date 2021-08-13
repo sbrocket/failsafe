@@ -25,6 +25,7 @@ rand = "0.8"
 serde = { version = "1.0", features = ["rc"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
+toml = "0.5"
 tracing = "0.1"
 tracing-subscriber = "0.2"
 static_assertions = "1.1"
