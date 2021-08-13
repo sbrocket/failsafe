@@ -1,6 +1,13 @@
 .crates.toml
 .crates2.json
+.dockerignore
 .env
+.git
+.github
+.gitmodules
 /bin
+/deploy
 /state
 /target
+*.md
+Dockerfile
