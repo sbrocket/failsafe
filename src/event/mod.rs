@@ -736,11 +736,17 @@ impl<C: CacheHttp> EventManager<C> {
 
         if old.recur {
             info!("Creating event recurrence from {}", id);
+
+            // Check whether we're cleaning up an event that's >1 week old and increase date by
+            // multiple weeks as needed. Otherwise we'll end up creating many events, spamming event
+            // channels and so forth, to do the same thing.
+            let weeks_to_add = Utc::now().signed_duration_since(old.datetime).num_weeks() + 1;
+
             let id = state.next_id(old.activity)?;
             let new = Arc::new(Event {
                 id,
                 activity: old.activity,
-                datetime: old.datetime + chrono::Duration::weeks(1),
+                datetime: old.datetime + chrono::Duration::weeks(weeks_to_add),
                 description: old.description.clone(),
                 group_size: old.group_size,
                 recur: true,
