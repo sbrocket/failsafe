@@ -109,6 +109,7 @@ define_activities! {
     TrialsOfOsiris: ("Trials of Osiris", "trials", Crucible, 4),
     Quickplay: ("Quickplay", "quick", Crucible, 4),
     Competitive: ("Competitive", "comp", Crucible, 4),
+    PrivateMatch: ("Private Match", "priv", Crucible, 6),
     Gambit: ("Gambit", "gambit", Gambit, 4),
     Harbinger: ("Harbinger", "harb", ExoticQuest, 3),
     Presage: ("Presage", "pres", ExoticQuest, 3),
