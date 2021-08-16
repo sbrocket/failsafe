@@ -19,8 +19,63 @@ use serenity::{
 };
 use tracing::{debug, error, info, warn};
 
+// Macro to create the individual leaf commands for each ActivityType. An "activity" option is added
+// to the command depending on whether the ActivityType has a single Activity or not.
+macro_rules! define_create_command {
+    ($enum_name:ident: ($name:literal, $cmd:literal)) => {
+        paste! {
+            define_leaf_command!(
+                [<LfgCreate $enum_name>],
+                $cmd,
+                concat!("Create a new ", $name, " event"),
+                lfg_create,
+                options: [ [<ActivityOpt $enum_name>], opts::Datetime ],
+            );
+
+            define_command_option!(
+                id: [<ActivityOpt $enum_name>],
+                name: "activity",
+                description: "Activity for this event",
+                required: true,
+                option_type: OptionType::String(&*[<ACTIVITIES_ $enum_name:upper>]),
+            );
+
+            lazy_static! {
+                static ref [<ACTIVITIES_ $enum_name:upper>]: Vec<(&'static str, &'static str)> = {
+                    Activity::activities_with_type(ActivityType::$enum_name)
+                        .map(|a| (a.name(), a.id_prefix()))
+                        .collect()
+                };
+            }
+        }
+    };
+    ($enum_name:ident: ($name:literal, $cmd:literal, Single)) => {
+        paste! {
+            define_leaf_command!(
+                [<LfgCreate $enum_name>],
+                $cmd,
+                concat!("Create a new ", $name, " event"),
+                [<lfg_create_ $enum_name:lower>],
+                options: [ opts::Datetime ],
+            );
+
+            // For ActivityTypes with a single Activity, create a command handler that just passes
+            // that single Activity along (as opposed to the standard lfg_create that parses the
+            // "activity" option).
+            #[command_attr::hook]
+            async fn [<lfg_create_ $enum_name:lower>](
+                ctx: &Context,
+                interaction: &ApplicationCommandInteraction,
+                options: &Vec<ApplicationCommandInteractionDataOption>,
+            ) -> Result<()> {
+                create(ctx, interaction, options, Activity::$enum_name).await
+            }
+        }
+    };
+}
+
 macro_rules! define_create_commands {
-    ($($enum_name:ident: ($name:literal, $cmd:literal)),+ $(,)?) => {
+    ($($enum_name:ident: $props:tt),+ $(,)?) => {
         paste! {
             define_command_group!(LfgCreate, "create", "Create a new event",
                             subcommands: [
@@ -30,29 +85,7 @@ macro_rules! define_create_commands {
                             ]);
 
             $(
-                define_leaf_command!(
-                    [<LfgCreate $enum_name>],
-                    $cmd,
-                    concat!("Create a new ", $name, " event"),
-                    lfg_create,
-                    options: [ [<ActivityOpt $enum_name>], opts::Datetime ],
-                );
-
-                define_command_option!(
-                    id: [<ActivityOpt $enum_name>],
-                    name: "activity",
-                    description: "Activity for this event",
-                    required: true,
-                    option_type: OptionType::String(&*[<ACTIVITIES_ $enum_name:upper>]),
-                );
-
-                lazy_static! {
-                    static ref [<ACTIVITIES_ $enum_name:upper>]: Vec<(&'static str, &'static str)> = {
-                        Activity::activities_with_type(ActivityType::$enum_name)
-                            .map(|a| (a.name(), a.id_prefix()))
-                            .collect()
-                    };
-                }
+                define_create_command!($enum_name: $props);
             )+
         }
     }
@@ -66,12 +99,6 @@ async fn lfg_create(
     interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
-    let recv_time = Utc::now();
-
-    let member = interaction
-        .member
-        .as_ref()
-        .ok_or_else(|| format_err!("Interaction not in a guild"))?;
     let activity = match options.get_value("activity")? {
         Some(Value::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
@@ -79,6 +106,22 @@ async fn lfg_create(
     }?;
     let activity = Activity::activity_with_id_prefix(activity)
         .ok_or_else(|| format_err!("Unexpected activity value: {:?}", activity))?;
+
+    create(ctx, interaction, options, activity).await
+}
+
+async fn create(
+    ctx: &Context,
+    interaction: &ApplicationCommandInteraction,
+    options: &Vec<ApplicationCommandInteractionDataOption>,
+    activity: Activity,
+) -> Result<()> {
+    let recv_time = Utc::now();
+
+    let member = interaction
+        .member
+        .as_ref()
+        .ok_or_else(|| format_err!("Interaction not in a guild"))?;
     let datetime = match options.get_value("datetime")? {
         Some(Value::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),

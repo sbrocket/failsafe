@@ -7,17 +7,17 @@ macro_rules! with_activity_types {
             Raid: ("Raid", "raid"),
             Dungeon: ("Dungeon", "dungeon"),
             Crucible: ("Crucible", "pvp"),
-            Gambit: ("Gambit", "gambit"),
+            Gambit: ("Gambit", "gambit", Single),
             ExoticQuest: ("Exotic Quest", "exotic"),
             Seasonal: ("Seasonal", "seasonal"),
             Other: ("Other", "other"),
-            Custom: ("Custom", "custom"),
+            Custom: ("Custom", "custom", Single),
         }
     };
 }
 
 macro_rules! define_activity_types {
-    ($($enum_name:ident: ($name:literal, $cmd:literal)),+ $(,)?) => {
+    ($($enum_name:ident: ($name:literal, $cmd:literal $(, Single)?)),+ $(,)?) => {
         /// Destiny 2 activity types.
         #[derive(IntoEnumIterator, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
         pub enum ActivityType {
@@ -158,5 +158,27 @@ mod tests {
         ActivityType::into_enum_iter().for_each(|ty| {
             assert!(Activity::activities_with_type(ty).count() <= 25);
         })
+    }
+
+    // The annotation for which ActivityTypes have a single associated Activity is manually applied;
+    // check that it is correct.
+    #[test]
+    fn activity_types_single_annotation_is_correct() {
+        macro_rules! check_single_annotation {
+            ($($enum_name:ident: $params:tt),+ $(,)?) => {
+                $(
+                    check_single_annotation!{ @each $enum_name: $params }
+                )+
+            };
+            (@each $enum_name:ident: ($name:literal, $cmd:literal, Single)) => {
+                assert_eq!(
+                    Activity::activities_with_type(ActivityType::$enum_name).count(),
+                    1
+                )
+            };
+            (@each $enum_name:ident: ($name:literal, $cmd:literal)) => { };
+        }
+
+        with_activity_types! { check_single_annotation }
     }
 }
