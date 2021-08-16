@@ -13,7 +13,8 @@ use serenity::{
 };
 use std::time::Duration;
 use std::{str::FromStr, sync::Arc};
-use tracing::debug;
+use tokio::time::sleep;
+use tracing::{debug, error};
 
 mod opts;
 
@@ -82,7 +83,10 @@ async fn edit_event_from_str(
     }
 }
 
-const LFG_DESCRIPTION_TIMEOUT_SEC: u64 = 60;
+// Nudge the user for a description after this timeout.
+const LFG_DESCRIPTION_NUDGE_SEC: u64 = 60;
+// Overall description timeout.
+const LFG_DESCRIPTION_TIMEOUT_SEC: u64 = 3 * 60;
 
 // Note that this creates the original interaction response, so subsequent logic must take care to
 // edit that response or create followups, rather than trying to create it again (which will fail).
@@ -97,32 +101,63 @@ pub async fn ask_for_description(
         .create_response(&ctx, query_content.to_string(), true)
         .await?;
 
-    // Wait for the user to reply with the description.
-    if let Some(reply) = user
+    let mut reply_fut = user
         .await_reply(&ctx)
-        .timeout(Duration::from_secs(LFG_DESCRIPTION_TIMEOUT_SEC))
-        .await
-    {
-        // Immediately delete the user's (public) message since the rest of the bot interaction
-        // is ephemeral.
-        if let Err(err) = reply.delete(&ctx).await {
-            // If the user is doing this in an event channel, our delete will race with
-            // ChannelUpdater's delete, so ignore "Unknown Message" errors.
-            if !err.is_discord_json_error(DiscordJsonErrorCode::UnknownMessage) {
-                Err(err)?;
+        .timeout(Duration::from_secs(LFG_DESCRIPTION_TIMEOUT_SEC));
+    let nudge_sleep = sleep(Duration::from_secs(LFG_DESCRIPTION_NUDGE_SEC));
+    tokio::pin!(nudge_sleep);
+
+    let mut nudge_followup = None;
+    loop {
+        tokio::select! {
+            // Nudge the user for a description in case it was unclear what to do.
+            _ = &mut nudge_sleep, if !nudge_sleep.is_elapsed() => {
+                let content = MessageBuilder::new()
+                        .push("*Pssst, ")
+                        .mention(user)
+                        .push(", still there?* Just send a message with the event description in this channel.")
+                        .build();
+                nudge_followup.insert(interaction.create_followup(&ctx, content, true).await?);
             }
-        }
-        Ok(Some(reply.content.clone()))
-    } else {
-        // Timed out waiting for the description, send a followup message so that the user can
-        // see the description request still and so the mention works.
-        let content = MessageBuilder::new()
-                .push("**Yoohoo, ")
-                .mention(user)
-                .push("!** Are the Fallen dismantling *your* brain now? *Whatever, just gonna ask me again...not like I'm going anywhere...*")
-                .build();
-        interaction.create_followup(&ctx, content, true).await?;
-        Ok(None)
+
+            // Wait for the user to reply with the description.
+            reply = &mut reply_fut => {
+                if let Some(reply) = reply {
+                    // Immediately delete the user's (public) message since the rest of the bot
+                    // interaction is ephemeral.
+                    if let Err(err) = reply.delete(&ctx).await {
+                        // If the user is doing this in an event channel, our delete will race with
+                        // ChannelUpdater's delete, so ignore "Unknown Message" errors.
+                        if !err.is_discord_json_error(DiscordJsonErrorCode::UnknownMessage) {
+                            Err(err)?;
+                        }
+                    }
+
+                    if let Some(followup) = nudge_followup {
+                        // We can't just delete the followup, since it's ephemeral, so just edit the
+                        // message so the channel state doesn't look confusing.
+                        let edit_fut = interaction.edit_followup_message(&ctx, followup.id, |msg| {
+                            msg.content("*Good job human, you followed basic instructions!*")
+                        });
+                        if let Err(err) = edit_fut.await {
+                            error!("Failed to edit nudge followup message: {:?}", err);
+                        }
+                    }
+
+                    return Ok(Some(reply.content.clone()));
+                } else {
+                    // Timed out waiting for the description, send a followup message so that the
+                    // user can see the description request still and so the mention works.
+                    let content = MessageBuilder::new()
+                            .push("**Yoohoo, ")
+                            .mention(user)
+                            .push("!** Are the Fallen dismantling *your* brain now? *Whatever, just ask me again...not like I'm going anywhere...*")
+                            .build();
+                    interaction.create_followup(&ctx, content, true).await?;
+                    return Ok(None);
+                }
+            }
+        };
     }
 }
 

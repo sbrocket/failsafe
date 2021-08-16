@@ -113,8 +113,8 @@ async fn lfg_create(
 
     // Ask for the event description in the main response.
     let content = format!(
-        "Captain, what's so special about this... *uhhh, \"{}\"?*  ...event anyway? \
-                    Describe it for me...but in simple terms like for a Guardia...*oop!*",
+        "What's so special about this... *uhhh, \"{}\"?*  ...event?\n\
+                    **Give me a description.** *(In simple terms, like for a Guardi...errr, nevermind...)*",
         activity
     );
     let description = match ask_for_description(ctx, interaction, content).await? {
