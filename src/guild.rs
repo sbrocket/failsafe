@@ -168,9 +168,8 @@ impl From<&SingleGuildConfigToml> for GuildConfig {
                 Box::new(|e: &Event| match e.activity.activity_type() {
                     ActivityType::Dungeon
                     | ActivityType::Gambit
-                    | ActivityType::ExoticQuest
-                    | ActivityType::Seasonal
-                    | ActivityType::Other => true,
+                    | ActivityType::PvE
+                    | ActivityType::Seasonal => true,
                     _ => false,
                 }),
             ),

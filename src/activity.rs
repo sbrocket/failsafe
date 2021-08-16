@@ -8,9 +8,8 @@ macro_rules! with_activity_types {
             Dungeon: ("Dungeon", "dungeon"),
             Crucible: ("Crucible", "pvp"),
             Gambit: ("Gambit", "gambit", Single),
-            ExoticQuest: ("Exotic Quest", "exotic"),
+            PvE: ("PvE", "pve"),
             Seasonal: ("Seasonal", "seasonal"),
-            Other: ("Other", "other"),
             Custom: ("Custom", "custom", Single),
         }
     };
@@ -96,7 +95,6 @@ macro_rules! define_activities {
     };
 }
 
-// Other possible activities to add: EmpireHunt, LostSector, NightmareHunt, Quests, Strikes, Farming, Story, BlindWell,
 define_activities! {
     VaultOfGlass: ("Vault of Glass", "vog", Raid, 6),
     DeepStoneCrypt: ("Deep Stone Crypt", "dsc", Raid, 6),
@@ -110,12 +108,17 @@ define_activities! {
     Quickplay: ("Quickplay", "quick", Crucible, 4),
     Competitive: ("Competitive", "comp", Crucible, 4),
     PrivateMatch: ("Private Match", "priv", Crucible, 6),
+    OtherPvP: ("Other PvP", "pvp", Crucible, 6),
     Gambit: ("Gambit", "gambit", Gambit, 4),
-    Harbinger: ("Harbinger", "harb", ExoticQuest, 3),
-    Presage: ("Presage", "pres", ExoticQuest, 3),
+    Grandmaster: ("Grandmaster Nightfall", "gm", PvE, 3),
+    Nightfall: ("Nightfall", "nf", PvE, 3),
+    Harbinger: ("Harbinger", "harb", PvE, 3),
+    Presage: ("Presage", "pres", PvE, 3),
+    Story: ("Story Missions", "story", PvE, 3),
+    OtherPvE: ("Other PvE", "pve", PvE, 3),
     Override: ("Override", "override", Seasonal, 6),
+    Battleground: ("Battleground", "battle", Seasonal, 3),
     WrathbornHunt: ("Wrathborn Hunt", "hunt", Seasonal, 3),
-    Nightfall: ("Nightfall", "nf", Other, 3),
     Custom: ("Custom", "cust", Custom, 6),
 }
 
