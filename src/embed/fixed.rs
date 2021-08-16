@@ -1,6 +1,6 @@
 use crate::event::{Event, EventId};
 use anyhow::{Context as _, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use futures::prelude::*;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -220,14 +220,14 @@ pub enum EventEmbedMessage {
     // A "normal" message in a channel, either posted directly by the bot or a non-ephemeral
     // interaction response.
     Normal(ChannelId, MessageId),
-    // An ephemeral interaction response, the time it was received, and the text of the response.
+    // An ephemeral interaction response and the text of the response.
     // These cannot be edited by message ID, only through the Edit Original Interaction Response
     // endpoint, and then only within the 15 minute lifetime of the Interaction's token.
     //
     // As such, we will skip updating responses older than 15 minutes, and edit the responses to
     // only include the given text at 14 minutes to avoid stale embeds in the user's chat
     // scrollback.
-    EphemeralResponse(ApplicationCommandInteraction, DateTime<Utc>, String),
+    EphemeralResponse(ApplicationCommandInteraction, String),
 }
 
 lazy_static! {
@@ -255,19 +255,21 @@ impl EventEmbedMessage {
     fn expired(&self) -> bool {
         match self {
             EventEmbedMessage::Normal(..) => false,
-            EventEmbedMessage::EphemeralResponse(_, recv, _) => {
-                Utc::now().signed_duration_since(recv.clone()) >= *INTERACTION_LIFETIME
+            EventEmbedMessage::EphemeralResponse(interaction, _) => {
+                Utc::now().signed_duration_since(interaction.id.created_at())
+                    >= *INTERACTION_LIFETIME
             }
         }
     }
 
     fn schedule_ephemeral_response_cleanup(&self) {
-        if let EventEmbedMessage::EphemeralResponse(interaction, recv, content) = self {
+        if let EventEmbedMessage::EphemeralResponse(interaction, content) = self {
             if self.expired() {
                 return;
             }
 
-            let delay = *EPHEMERAL_LIFETIME - Utc::now().signed_duration_since(recv.clone());
+            let delay =
+                *EPHEMERAL_LIFETIME - Utc::now().signed_duration_since(interaction.id.created_at());
             let delay = if delay < Duration::zero() {
                 std::time::Duration::new(0, 0)
             } else {
@@ -275,7 +277,6 @@ impl EventEmbedMessage {
             };
 
             let interaction = interaction.clone();
-            let recv = recv.clone();
             let content = content.clone();
             tokio::spawn(async move {
                 debug!(
@@ -298,8 +299,8 @@ impl EventEmbedMessage {
                     .await
                 {
                     error!(
-                        "Failed to remove embeds from ephemeral response for interaction received at {}: {:?}",
-                        recv, err
+                        "Failed to remove embeds from ephemeral response for interaction created at {}: {:?}",
+                        interaction.id.created_at(), err
                     );
                 }
             });

@@ -116,8 +116,6 @@ async fn create(
     options: &Vec<ApplicationCommandInteractionDataOption>,
     activity: Activity,
 ) -> Result<()> {
-    let recv_time = Utc::now();
-
     let member = interaction
         .member
         .as_ref()
@@ -199,7 +197,7 @@ async fn create(
     event_manager
         .keep_embed_updated(
             event_id,
-            EventEmbedMessage::EphemeralResponse(interaction.clone(), recv_time, content),
+            EventEmbedMessage::EphemeralResponse(interaction.clone(), content),
         )
         .await?;
 
