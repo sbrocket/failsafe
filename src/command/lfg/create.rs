@@ -17,7 +17,7 @@ use serenity::{
         ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
     },
 };
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 
 macro_rules! define_create_commands {
     ($($enum_name:ident: ($name:literal, $cmd:literal)),+ $(,)?) => {
@@ -94,13 +94,22 @@ async fn lfg_create(
                 datetime
             );
             interaction.create_response(&ctx, content, true).await?;
-            return Err(err.context(format!("Unable to parse provided datetime: {:?}", datetime)));
+            warn!(
+                "Unable to parse provided datetime ('{}'): {:?}",
+                datetime, err
+            );
+            return Ok(());
         }
     };
     debug!("Parsed datetime: {}", datetime);
 
-    // TODO: Maybe check that the date doesn't seem unreasonably far away? (>1 months, ask to
-    // confirm?)
+    // Check that the datetime isn't in the past.
+    if datetime <= Utc::now() {
+        let content = "Sorry Captain, you can't create events in the past... *I'm an AI, not a time-traveling Vex*";
+        interaction.create_response(&ctx, content, true).await?;
+        info!("Rejected new event datetime in the past ({})", datetime);
+        return Ok(());
+    }
 
     // Ask for the event description in the main response.
     let content = format!(
