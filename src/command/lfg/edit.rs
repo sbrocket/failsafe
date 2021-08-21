@@ -6,7 +6,7 @@ use crate::{
     util::*,
 };
 use anyhow::{format_err, Context as _, Error, Result};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde_json::Value;
 use serenity::{
@@ -113,13 +113,23 @@ impl EditType {
         match option_name {
             "datetime" => match value {
                 OptionValue::String(dt_str) => {
-                    Ok(EditType::Datetime(match parse_datetime(&dt_str) {
-                        Ok(datetime) => Ok(datetime),
+                    let datetime = match parse_datetime(&dt_str) {
+                        Ok(datetime) => {
+                            if datetime <= Utc::now() {
+                                Err((
+                                    "Sorry Captain, you can't move events into the past... *I'm an AI, not a time-traveling Vex*".to_owned(),
+                                    format_err!("Rejected new event datetime in the past ({})", datetime),
+                                ))
+                            } else {
+                                Ok(datetime)
+                            }
+                        }
                         Err(err) => Err((
                             format!("Sorry Captain, I don't understand what '{}' means", dt_str),
                             err.context(format!("Unable to parse provided datetime: {:?}", dt_str)),
                         )),
-                    }))
+                    };
+                    Ok(EditType::Datetime(datetime))
                 }
                 _ => Err(format_err!("Wrong {} value type", option_name)),
             },
