@@ -137,12 +137,32 @@ impl EditType {
         }
     }
 
-    pub fn apply_edit(self, event: &mut Event) {
+    pub fn apply_edit(self, event: &mut Event) -> String {
         match self {
-            EditType::Datetime(Ok(datetime)) => event.set_datetime(datetime),
-            EditType::Description(Some(descr)) => event.description = descr,
-            EditType::GroupSize(size) => event.group_size = size,
-            EditType::Recur(recur) => event.recur = recur,
+            EditType::Datetime(Ok(datetime)) => {
+                event.set_datetime(datetime);
+                format!(
+                    "Event **{}** updated to {}",
+                    event.id,
+                    event.formatted_datetime()
+                )
+            }
+            EditType::Description(Some(descr)) => {
+                event.description = descr;
+                format!("Event **{}** description updated", event.id)
+            }
+            EditType::GroupSize(size) => {
+                event.group_size = size;
+                format!("Event **{}** group size is now {}", event.id, size)
+            }
+            EditType::Recur(recur) => {
+                event.recur = recur;
+                format!(
+                    "Event **{}** will {} recur weekly",
+                    event.id,
+                    if recur { "now" } else { "no longer" }
+                )
+            }
             EditType::Datetime(Err(_)) => unreachable!("Tried to apply invalid datetime"),
             EditType::Description(None) => unreachable!("Tried to apply empty description"),
         }
@@ -208,11 +228,8 @@ async fn lfg_edit(
         _ => {}
     }
 
-    let edit_result = edit_event_from_str(&event_manager, &event_id, |event| {
-        edit.apply_edit(event);
-        format!("Event **{}** updated!", event.id)
-    })
-    .await;
+    let edit_result =
+        edit_event_from_str(&event_manager, &event_id, |event| edit.apply_edit(event)).await;
     let content = match edit_result {
         Ok(content) => content,
         Err(err) => {
