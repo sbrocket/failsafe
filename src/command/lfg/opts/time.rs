@@ -6,6 +6,7 @@ use chrono::{
 use chrono_tz::Tz;
 use lazy_static::lazy_static;
 use serde_json::Value;
+use std::fmt::Write;
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -105,6 +106,10 @@ pub enum DatetimeParseError {
     TooFarAway(String),
     #[error("{0} is a recent past date")]
     MaybeRecentPast(String),
+    #[error("{0} does not exist, DST jumped over that time")]
+    DstJumpedOver(String),
+    #[error("{0} is ambiguous, could be DST or not")]
+    DstAmbiguous(String),
     #[error(transparent)]
     OptionError(#[from] OptionError),
     #[error("Missing required option '{0}'")]
@@ -127,26 +132,27 @@ impl DatetimeParseError {
     /// If the error was the result of user input, this returns a user-facing description of the
     /// error. Otherwise None.
     pub fn user_error(&self) -> Option<String> {
+        use DatetimeParseError::*;
         match self {
-            DatetimeParseError::InvalidDateFormat(date, _) => Some(format!(
+            InvalidDateFormat(date, _) => Some(format!(
                 "'{}' isn't a valid date format; I need the month and day in that order (e.g. '2/20')",
                 date
             )),
-            DatetimeParseError::DateOutOfRange(date, _) => Some(format!(
+            DateOutOfRange(date, _) => Some(format!(
                 "'{}' is not a valid date.",
                 date
             )),
-            DatetimeParseError::TimeHasPassed(time) => Some(format!(
+            TimeHasPassed(time) => Some(format!(
                 "I can't do that, {} today is in the past... *I'm an AI, not a time-traveling Vex*",
                 time
             )),
-            DatetimeParseError::TooFarAway(date) => Some(format!(
+            TooFarAway(date) => Some(format!(
                 "I can't do that, {} is too far in the future.",
                 date
             )),
-            DatetimeParseError::MaybeRecentPast(date) => {
-                Some(format!("I can't do that, {} is in the past.", date))
-            }
+            MaybeRecentPast(date) => Some(format!("I can't do that, {} is in the past.", date)),
+            DstJumpedOver(datetime) => Some(format!("I can't do that, '{}' doesn't exist, daylight savings time jumps over that time.", datetime)),
+            DstAmbiguous(datetime) => Some(format!("I can't do that, '{}' is ambiguous; it could be either daylight savings time or not.", datetime)),
             // All other error types are bugs/internal errors.
             _ => None,
         }
@@ -324,15 +330,31 @@ fn datetime_with_timezone_for_year<Tz: TimeZone>(
 
     match parsed.to_datetime_with_timezone(&timezone) {
         Ok(dt) => Ok(dt),
-        Err(err) => Err(match err.kind() {
-            format::ParseErrorKind::OutOfRange => {
-                let month = parsed.month.ok_or_else(|| ParsedMissingValue("month"))?;
-                let day = parsed.day.ok_or_else(|| ParsedMissingValue("day"))?;
-                let year = parsed.year.ok_or_else(|| ParsedMissingValue("year"))?;
-                DateOutOfRange(format!("{}/{}/{}", month, day, year), err)
-            }
-            _ => DatetimeCreationFailed(err, parsed),
-        }),
+        Err(err) => {
+            let month = parsed.month.ok_or_else(|| ParsedMissingValue("month"))?;
+            let day = parsed.day.ok_or_else(|| ParsedMissingValue("day"))?;
+            let datetime_str = |parsed: &format::Parsed| -> Result<_, DatetimeParseError> {
+                let time = parsed
+                    .to_naive_time()
+                    .map_err(|err| NaiveTimeCreationFailed(err, parsed.clone()))?;
+                let mut datetime_str = time.format("%-I:%M %p ").to_string();
+                write!(&mut datetime_str, "{}/{}", month, day).unwrap();
+                Ok(datetime_str)
+            };
+            Err(match err.kind() {
+                format::ParseErrorKind::OutOfRange => {
+                    let year = parsed.year.ok_or_else(|| ParsedMissingValue("year"))?;
+                    DateOutOfRange(format!("{}/{}/{}", month, day, year), err)
+                }
+                format::ParseErrorKind::Impossible if month == 3 && day == 14 => {
+                    DstJumpedOver(datetime_str(&parsed)?)
+                }
+                format::ParseErrorKind::NotEnough if month == 11 && day == 7 => {
+                    DstAmbiguous(datetime_str(&parsed)?)
+                }
+                _ => DatetimeCreationFailed(err, parsed),
+            })
+        }
     }
 }
 
@@ -470,7 +492,48 @@ mod tests {
             pm: true,
             timezone: "CT", // CST (UTC-6) on 2/29
             expected: "2024-02-29T12:00:00-06:00",
-        }
+        },
+        // Resulting hour_div_12 should match input when crossing DST transition. In other words,
+        // resulting timezone has daylight savings enabled/disabled based on the target date, not
+        // the current date.
+        dst_started1 => {
+            now: "2021-03-13T00:00:00-08:00",
+            date: "3/14",
+            hour: 12,
+            minute: 0,
+            pm: true,
+            timezone: "PT",
+            expected: "2021-03-14T12:00:00-07:00",
+        },
+        // 3:00 AM 3/14 is unambiguously after DST starts
+        dst_started2 => {
+            now: "2021-03-13T00:00:00-08:00",
+            date: "3/14",
+            hour: 3,
+            minute: 0,
+            pm: false,
+            timezone: "PT",
+            expected: "2021-03-14T03:00:00-07:00",
+        },
+        dst_ended1 => {
+            now: "2021-11-06T00:00:00-04:00",
+            date: "11/7",
+            hour: 12,
+            minute: 0,
+            pm: true,
+            timezone: "ET",
+            expected: "2021-11-07T12:00:00-05:00",
+        },
+        // 2:00 AM 11/7 is unambiguously after DST ends
+        dst_ended2 => {
+            now: "2021-11-06T00:00:00-04:00",
+            date: "11/7",
+            hour: 2,
+            minute: 0,
+            pm: false,
+            timezone: "ET",
+            expected: "2021-11-07T02:00:00-05:00",
+        },
     }
 
     test_parse! {
@@ -599,6 +662,44 @@ mod tests {
             pm: true,
             timezone: "CT", // CST (UTC-6) on 2/10
             pattern: Err(DateOutOfRange(date, _)) if date == "2/29/2022"
+        },
+        // [2:00, 3:00) AM 3/14 does not exist, DST jumps over it
+        dst_start_doesnt_exist1 => {
+            now: "2021-03-13T00:00:00-08:00",
+            date: "3/14",
+            hour: 2,
+            minute: 0,
+            pm: false,
+            timezone: "PT",
+            pattern: Err(DstJumpedOver(datetime)) if datetime == "2:00 AM 3/14"
+        },
+        dst_start_doesnt_exist2 => {
+            now: "2021-03-13T00:00:00-08:00",
+            date: "3/14",
+            hour: 2,
+            minute: 30,
+            pm: false,
+            timezone: "PT",
+            pattern: Err(DstJumpedOver(datetime)) if datetime == "2:30 AM 3/14"
+        },
+        // [1:00, 2:00) AM 11/7 ET is ambiguous, could be either EST or EDT
+        dst_end_ambiguous1 => {
+            now: "2021-11-06T00:00:00-04:00",
+            date: "11/7",
+            hour: 1,
+            minute: 0,
+            pm: false,
+            timezone: "ET",
+            pattern: Err(DstAmbiguous(datetime)) if datetime == "1:00 AM 11/7"
+        },
+        dst_end_ambiguous2 => {
+            now: "2021-11-06T00:00:00-04:00",
+            date: "11/7",
+            hour: 1,
+            minute: 30,
+            pm: false,
+            timezone: "ET",
+            pattern: Err(DstAmbiguous(datetime)) if datetime == "1:30 AM 11/7"
         },
     }
 }
