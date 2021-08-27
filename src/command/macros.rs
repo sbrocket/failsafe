@@ -11,15 +11,41 @@ macro_rules! define_command_option {
             use super::*;
 
             lazy_static::lazy_static! {
-                pub static ref OPTION: $crate::command::CommandOption = $crate::command::CommandOption {
+                static ref OPTION: $crate::command::CommandOption = $crate::command::CommandOption {
                     name: $name,
                     description: $descr,
                     required: $required,
                     option_type: $option_type,
                 };
+
+                pub static ref OPTIONS: Vec<&'static $crate::command::CommandOption> = vec![&OPTION];
             }
         }
     };
+}
+
+macro_rules! define_command_option_group {
+    (
+        id: $id:ident,
+        options: [$($($opt_path:ident)::+),+ $(,)?] $(,)?
+    ) => {
+        #[allow(non_snake_case)]
+        pub mod $id {
+            #[allow(unused)]
+            use super::*;
+
+            lazy_static::lazy_static! {
+                pub static ref OPTIONS: Vec<&'static $crate::command::CommandOption> = {
+                    let mut vec = Vec::new();
+                    $(
+                        vec.extend_from_slice(&*$($opt_path)::+ ::OPTIONS);
+                    )+
+                    vec
+                };
+            }
+
+        }
+    }
 }
 
 macro_rules! define_leaf_command {
@@ -30,9 +56,13 @@ macro_rules! define_leaf_command {
             use super::*;
 
             lazy_static::lazy_static! {
-                static ref OPTIONS: Vec<&'static $crate::command::CommandOption> = vec![
-                    $(&*$($opt_path)::+ ::OPTION),*
-                ];
+                static ref OPTIONS: Vec<&'static $crate::command::CommandOption> = {
+                    let mut vec = Vec::new();
+                    $(
+                        vec.extend_from_slice(&*$($opt_path)::+ ::OPTIONS);
+                    )*
+                    vec
+                };
 
                 pub static ref LEAF: $crate::command::LeafCommand = $crate::command::LeafCommand {
                     options: &*OPTIONS,
