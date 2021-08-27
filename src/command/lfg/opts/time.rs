@@ -195,9 +195,6 @@ pub fn parse_datetime_options<O: OptionsExt>(
         .get(timezone_str.as_str())
         .ok_or_else(|| UnexpectedValue("timezone", Value::String(timezone_str.clone())))?;
 
-    // TODO: Split function here and add unit tests over the latter part, especially around year
-    // logic and leap (or other sometimes-valid) days. Like, what happens with "2/29" if it's
-    // currently "3/1" and next year is or isn't a leap year, or if current year is or isn't.
     DatetimeComponents {
         now: Utc::now(),
         date,
