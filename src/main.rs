@@ -21,7 +21,6 @@ mod embed;
 mod event;
 mod guild;
 mod store;
-mod time;
 mod util;
 
 #[derive(Default)]

@@ -3,7 +3,6 @@ use crate::{
     embed::EmbedManager,
     guild::GuildConfig,
     store::{PersistentStore, PersistentStoreBuilder},
-    time::serialize_datetime_tz,
     util::*,
 };
 use anyhow::{format_err, Context as _, Error, Result};

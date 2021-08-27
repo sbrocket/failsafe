@@ -19,6 +19,7 @@ use serenity::{
     prelude::*,
 };
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
+use thiserror::Error;
 use tokio::fs::File;
 
 use crate::{event::EventManager, guild::GuildManager};
@@ -196,14 +197,22 @@ macro_rules! impl_interaction_ext {
 impl_interaction_ext!(ApplicationCommandInteraction, ApplicationCommand);
 impl_interaction_ext!(MessageComponentInteraction, MessageComponent);
 
-pub trait OptionsExt {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>>;
+#[derive(Error, Debug)]
+pub enum OptionError {
+    #[error("No value for option '{0}'")]
+    MissingValue(String),
+    #[error("Missing resolved value for option '{0}'")]
+    MissingResolvedValue(String),
+}
 
-    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>>;
+pub trait OptionsExt {
+    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>, OptionError>;
+
+    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>, OptionError>;
 }
 
 impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>> {
+    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>, OptionError> {
         let name = name.as_ref();
         let option = if let Some(option) = self.iter().find(|opt| opt.name == name) {
             option
@@ -211,12 +220,12 @@ impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
             return Ok(None);
         };
         option.value.as_ref().map_or_else(
-            || Err(format_err!("No value for option '{}'", name)),
+            || Err(OptionError::MissingValue(name.to_owned())),
             |v| Ok(Some(v)),
         )
     }
 
-    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>> {
+    fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>, OptionError> {
         let name = name.as_ref();
         let option = if let Some(option) = self.iter().find(|opt| opt.name == name) {
             option
@@ -224,7 +233,7 @@ impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
             return Ok(None);
         };
         option.resolved.as_ref().map_or_else(
-            || Err(format_err!("No resolved value for option '{}'", name)),
+            || Err(OptionError::MissingResolvedValue(name.to_owned())),
             |v| Ok(Some(v)),
         )
     }
@@ -337,5 +346,40 @@ impl SerenityErrorExt for SerenityError {
             }
         }
         false
+    }
+}
+
+/// Intended to be used with the #[serde(with = "module")] annotation on DateTime<Tz> fields
+pub mod serialize_datetime_tz {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    use chrono_tz::Tz;
+    use serde::{
+        de::{Error, Unexpected},
+        Deserialize, Deserializer, Serialize, Serializer,
+    };
+    use std::str::FromStr;
+
+    #[derive(Serialize, Deserialize)]
+    struct UtcDatetimeAndTimezone<'a>(DateTime<Utc>, &'a str);
+
+    pub fn serialize<S>(dt: &DateTime<Tz>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Serialize::serialize(
+            &UtcDatetimeAndTimezone(dt.with_timezone(&Utc), dt.timezone().name()),
+            s,
+        )
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<DateTime<Tz>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: UtcDatetimeAndTimezone = Deserialize::deserialize(d)?;
+        let tz = Tz::from_str(value.1)
+            .map_err(|s| D::Error::invalid_value(Unexpected::Str(&s), &"a chrono_tz::Tz name"))?;
+        Ok(value.0.with_timezone(&tz))
     }
 }

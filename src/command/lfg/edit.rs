@@ -1,12 +1,14 @@
-use super::{ask_for_description, edit_event_from_str, get_event_from_str, opts};
+use super::{
+    ask_for_description, edit_event_from_str, get_event_from_str,
+    opts::{self},
+};
 use crate::{
     command::{CommandHandler, OptionType},
     event::Event,
-    time::parse_datetime,
     util::*,
 };
 use anyhow::{format_err, Context as _, Error, Result};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use chrono_tz::Tz;
 use serde_json::Value;
 use serenity::{
@@ -47,7 +49,7 @@ define_edit_command!(
     "datetime",
     "Edit an existing event's date and time",
     lfg_edit,
-    options: [opts::EventId, opts::Datetime],
+    options: [opts::EventId, opts::time::Datetime],
 );
 
 define_edit_command!(
@@ -89,6 +91,7 @@ define_edit_command!(
 );
 
 enum EditType {
+    // TODO: This is a pretty gnarly type...find a way to improve the flow here.
     Datetime(Result<DateTime<Tz>, (String, Error)>),
     // Description is unique in that the value doesn't come from an option, but from a separate
     // query & response with the user.
@@ -102,8 +105,33 @@ impl EditType {
         options: &Vec<ApplicationCommandInteractionDataOption>,
         option_name: &str,
     ) -> Result<Self> {
-        if option_name == "description" {
-            return Ok(EditType::Description(None));
+        match option_name {
+            "description" => {
+                return Ok(EditType::Description(None));
+            }
+            "datetime" => {
+                // Parse the datetime options.
+                let datetime = match opts::time::parse_datetime_options(options) {
+                    Ok(datetime) => Ok(datetime),
+                    Err(err) => {
+                        let content = match err.user_error() {
+                            Some(descr) => descr,
+                            None => {
+                                error!("Error parsing datetime options: {:?}", err);
+                                "Sorry Captain, something went wrong with my internal chronometers..."
+                                        .to_owned()
+                            }
+                        };
+                        Err((content, err.into()))
+                    }
+                };
+
+                // TODO: Check that the datetime isn't far in the future (>6 months?), likely means misstaken
+                // user input led to bad assumed year.
+
+                return Ok(EditType::Datetime(datetime));
+            }
+            _ => {}
         }
 
         let value = match options.get_resolved(option_name)? {
@@ -111,28 +139,6 @@ impl EditType {
             None => Err(format_err!("Missing required {} value", option_name)),
         }?;
         match option_name {
-            "datetime" => match value {
-                OptionValue::String(dt_str) => {
-                    let datetime = match parse_datetime(&dt_str) {
-                        Ok(datetime) => {
-                            if datetime <= Utc::now() {
-                                Err((
-                                    "Sorry Captain, you can't move events into the past... *I'm an AI, not a time-traveling Vex*".to_owned(),
-                                    format_err!("Rejected new event datetime in the past ({})", datetime),
-                                ))
-                            } else {
-                                Ok(datetime)
-                            }
-                        }
-                        Err(err) => Err((
-                            format!("Sorry Captain, I don't understand what '{}' means", dt_str),
-                            err.context(format!("Unable to parse provided datetime: {:?}", dt_str)),
-                        )),
-                    };
-                    Ok(EditType::Datetime(datetime))
-                }
-                _ => Err(format_err!("Wrong {} value type", option_name)),
-            },
             "group-size" => match value {
                 OptionValue::Integer(size) => Ok(EditType::GroupSize(
                     u8::try_from(*size).context("Group size too large")?,

@@ -3,11 +3,9 @@ use crate::{
     activity::{Activity, ActivityType},
     command::OptionType,
     event::EventEmbedMessage,
-    time::parse_datetime,
     util::*,
 };
 use anyhow::{format_err, Context as _, Result};
-use chrono::Utc;
 use lazy_static::lazy_static;
 use paste::paste;
 use serde_json::Value;
@@ -17,7 +15,7 @@ use serenity::{
         ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
     },
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error};
 
 // Macro to create the individual leaf commands for each ActivityType. An "activity" option is added
 // to the command depending on whether the ActivityType has a single Activity or not.
@@ -29,7 +27,7 @@ macro_rules! define_create_command {
                 $cmd,
                 concat!("Create a new ", $name, " event"),
                 lfg_create,
-                options: [ [<ActivityOpt $enum_name>], opts::Datetime ],
+                options: [ [<ActivityOpt $enum_name>], opts::time::Datetime ],
             );
 
             define_command_option!(
@@ -56,7 +54,7 @@ macro_rules! define_create_command {
                 $cmd,
                 concat!("Create a new ", $name, " event"),
                 [<lfg_create_ $enum_name:lower>],
-                options: [ opts::Datetime ],
+                options: [ opts::time::Datetime ],
             );
 
             // For ActivityTypes with a single Activity, create a command handler that just passes
@@ -120,37 +118,26 @@ async fn create(
         .member
         .as_ref()
         .ok_or_else(|| format_err!("Interaction not in a guild"))?;
-    let datetime = match options.get_value("datetime")? {
-        Some(Value::String(v)) => Ok(v),
-        Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
-        None => Err(format_err!("Missing required datetime value")),
-    }?;
 
-    // Check that datetime format is good.
-    let datetime = match parse_datetime(&datetime) {
+    // Parse the datetime options.
+    let datetime = match opts::time::parse_datetime_options(options) {
         Ok(datetime) => datetime,
         Err(err) => {
-            let content = format!(
-                "Sorry Captain, I don't understand what '{}' means",
-                datetime
-            );
+            let content = match err.user_error() {
+                Some(descr) => descr,
+                None => {
+                    error!("Error parsing datetime options: {:?}", err);
+                    "Sorry Captain, something went wrong with my internal chronometers..."
+                        .to_owned()
+                }
+            };
             interaction.create_response(&ctx, content, true).await?;
-            warn!(
-                "Unable to parse provided datetime ('{}'): {:?}",
-                datetime, err
-            );
             return Ok(());
         }
     };
-    debug!("Parsed datetime: {}", datetime);
 
-    // Check that the datetime isn't in the past.
-    if datetime <= Utc::now() {
-        let content = "Sorry Captain, you can't create events in the past... *I'm an AI, not a time-traveling Vex*";
-        interaction.create_response(&ctx, content, true).await?;
-        info!("Rejected new event datetime in the past ({})", datetime);
-        return Ok(());
-    }
+    // TODO: Check that the datetime isn't far in the future (>6 months?), likely means misstaken
+    // user input led to bad assumed year.
 
     // Ask for the event description in the main response.
     let content = format!(
