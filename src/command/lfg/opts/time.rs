@@ -95,7 +95,9 @@ lazy_static! {
 #[derive(Error, Debug)]
 pub enum DatetimeParseError {
     #[error("Unable to parse date '{0}': {1}")]
-    InvalidDate(String, #[source] format::ParseError),
+    InvalidDateFormat(String, #[source] format::ParseError),
+    #[error("Date '{0}' is out of range: {1}")]
+    DateOutOfRange(String, #[source] format::ParseError),
     #[error("{0} today is in the past")]
     TimeHasPassed(String),
     #[error(transparent)]
@@ -121,8 +123,12 @@ impl DatetimeParseError {
     /// error. Otherwise None.
     pub fn user_error(&self) -> Option<String> {
         match self {
-            DatetimeParseError::InvalidDate(date, _) => Some(format!(
-                "'{}' isn't a valid date; I need the month and day in that order (e.g. '2/20')",
+            DatetimeParseError::InvalidDateFormat(date, _) => Some(format!(
+                "'{}' isn't a valid date format; I need the month and day in that order (e.g. '2/20')",
+                date
+            )),
+            DatetimeParseError::DateOutOfRange(date, _) => Some(format!(
+                "'{}' is out-of-range and not a valid date.",
                 date
             )),
             DatetimeParseError::TimeHasPassed(time) => Some(format!(
@@ -210,7 +216,7 @@ impl TryFrom<DatetimeComponents<'_>> for DateTime<Tz> {
 
         let mut parsed = format::Parsed::new();
         format::parse(&mut parsed, value.date, StrftimeItems::new("%m/%d"))
-            .map_err(|err| InvalidDate(value.date.to_owned(), err))?;
+            .map_err(|err| InvalidDateFormat(value.date.to_owned(), err))?;
         parsed
             .set_hour12(value.hour)
             .map_err(|err| ParsedRejectedValue("hour", value.hour.to_string(), err))?;
@@ -263,7 +269,10 @@ impl TryFrom<DatetimeComponents<'_>> for DateTime<Tz> {
 
         parsed
             .to_datetime_with_timezone(&value.timezone)
-            .map_err(|err| DatetimeCreationFailed(err, parsed))
+            .map_err(|err| match err.kind() {
+                format::ParseErrorKind::OutOfRange => DateOutOfRange(value.date.to_owned(), err),
+                _ => DatetimeCreationFailed(err, parsed),
+            })
     }
 }
 
@@ -374,6 +383,24 @@ mod tests {
             timezone: "CT", // CST (UTC-6) on 1/5
             expected: "2022-01-05T20:30:00-06:00",
         },
+        padded_date => {
+            now: "2021-01-05T14:00:00-04:00",
+            date: "01/08",
+            hour: 2,
+            minute: 0,
+            pm: true,
+            timezone: "PT", // PST (UTC-8) on 1/8
+            expected: "2021-01-08T14:00:00-08:00",
+        },
+        leap_day => {
+            now: "2020-02-01T00:00:00Z",
+            date: "2/29",
+            hour: 8,
+            minute: 30,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/29
+            expected: "2020-02-29T20:30:00-06:00",
+        },
     }
 
     test_parse! {
@@ -393,7 +420,7 @@ mod tests {
              minute: 30,
              pm: true,
              timezone: "ET", // EDT (UTC-4) on 4/20
-             pattern: Err(InvalidDate(date, _)) if date == "4/"
+             pattern: Err(InvalidDateFormat(date, _)) if date == "4/"
          },
          invalid_date2 => {
              now: "2021-04-20T12:00:00-04:00",
@@ -402,7 +429,43 @@ mod tests {
              minute: 30,
              pm: true,
              timezone: "ET", // EDT (UTC-4) on 4/20
-             pattern: Err(InvalidDate(date, _)) if date == "4-20"
+             pattern: Err(InvalidDateFormat(date, _)) if date == "4-20"
          },
+        month_out_of_range => {
+            now: "2021-02-01T00:00:00Z",
+            date: "13/1",
+            hour: 8,
+            minute: 30,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/29
+            pattern: Err(DateOutOfRange(date, _)) if date == "13/1"
+        },
+        day_out_of_range1 => {
+            now: "2021-02-01T00:00:00Z",
+            date: "1/32",
+            hour: 8,
+            minute: 30,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/29
+            pattern: Err(DateOutOfRange(date, _)) if date == "1/32"
+        },
+        day_out_of_range2 => {
+            now: "2021-02-01T00:00:00Z",
+            date: "4/31",
+            hour: 8,
+            minute: 30,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/29
+            pattern: Err(DateOutOfRange(date, _)) if date == "4/31"
+        },
+        not_leap_year => {
+            now: "2021-02-01T00:00:00Z",
+            date: "2/29",
+            hour: 8,
+            minute: 30,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/29
+            pattern: Err(DateOutOfRange(date, _)) if date == "2/29"
+        },
     }
 }

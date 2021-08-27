@@ -46,3 +46,7 @@ optional = true
 # console-subscriber is not yet published to crates.io, pin to a specific git revision
 git = "https://github.com/tokio-rs/console"
 rev = "52601b847780bb21e00cbac698f60de995dcc1d1"
+
+[patch.crates-io]
+# Use chrono v0.4.19 with ParseErrorKind made public
+chrono = { git = 'https://github.com/sbrocket/chrono', branch = 'v0.4.19-with-parse-error-kind-public' }
