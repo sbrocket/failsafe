@@ -133,7 +133,7 @@ impl DatetimeParseError {
                 date
             )),
             DatetimeParseError::DateOutOfRange(date, _) => Some(format!(
-                "'{}' is out-of-range and not a valid date.",
+                "'{}' is not a valid date.",
                 date
             )),
             DatetimeParseError::TimeHasPassed(time) => Some(format!(
@@ -274,39 +274,43 @@ impl TryFrom<DatetimeComponents<'_>> for DateTime<Tz> {
             },
             Ordering::Greater => false,
         };
-        let year = now.year() + if next_year { 1 } else { 0 };
-        let datetime =
-            datetime_with_timezone_for_year(parsed.clone(), value.timezone, year.into())?;
 
         const FUTURE_DATE_LIMIT_WEEKS: i64 = 26;
         const RECENT_PAST_DATE_DAYS: i64 = 30;
 
-        // Check whether the resulting date is unreasonably far away (arbitrarily chosen as ~6 months or
-        // 26 weeks). If so, return an error. The error is either:
-        //   - that the date is too far in the future or,
-        //   - if using the current year instead makes the date less than a ~month (30 days) ago,
-        //   assume the user meant that and they have the wrong date.
+        let year = now.year() + if next_year { 1 } else { 0 };
         let date_str = |dt: DateTime<Tz>| dt.format("%-m/%-d/%-Y").to_string();
-        if datetime - now >= Duration::weeks(FUTURE_DATE_LIMIT_WEEKS) {
-            if next_year {
-                let alternate_datetime =
-                    datetime_with_timezone_for_year(parsed, value.timezone, now.year().into());
-                match alternate_datetime {
-                    Ok(alt) => {
-                        if now - alt <= Duration::days(RECENT_PAST_DATE_DAYS) {
-                            return Err(MaybeRecentPast(date_str(alt)));
-                        }
-                    }
-                    Err(err) => warn!(
-                        "Error checking if alternate date is in recent past: {:?}",
-                        err
-                    ),
+        datetime_with_timezone_for_year(parsed.clone(), value.timezone, year.into())
+            .and_then(|datetime| {
+                // Check whether the resulting date is unreasonably far away (arbitrarily chosen as ~6 months or
+                // 26 weeks), and if so return an error.
+                if datetime - now >= Duration::weeks(FUTURE_DATE_LIMIT_WEEKS) {
+                    return Err(TooFarAway(date_str(datetime)));
                 }
-            }
-
-            return Err(TooFarAway(date_str(datetime)));
-        }
-        Ok(datetime)
+                Ok(datetime)
+            })
+            .or_else(|err| {
+                // If we initially assumed the year to be (current year + 1) and that resulted in an
+                // error that we'd attribute to user error, we check if the alternate assumption
+                // (current year) is valid and in the recent past (less than a ~month, 30 days), and
+                // replace the error with that.
+                if next_year && err.user_error().is_some() {
+                    let alternate_datetime =
+                        datetime_with_timezone_for_year(parsed, value.timezone, now.year().into());
+                    match alternate_datetime {
+                        Ok(alt) => {
+                            if now - alt <= Duration::days(RECENT_PAST_DATE_DAYS) {
+                                return Err(MaybeRecentPast(date_str(alt)));
+                            }
+                        }
+                        Err(err) => warn!(
+                            "Error creating alternate datetime for recent past check: {:?}",
+                            err
+                        ),
+                    }
+                }
+                Err(err)
+            })
     }
 }
 
@@ -461,6 +465,15 @@ mod tests {
             timezone: "CT", // CST (UTC-6) on 2/29
             expected: "2020-02-29T20:30:00-06:00",
         },
+        leap_day_next_year => {
+            now: "2023-12-01T00:00:00Z",
+            date: "2/29",
+            hour: 12,
+            minute: 0,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/29
+            expected: "2024-02-29T12:00:00-06:00",
+        }
     }
 
     test_parse! {
@@ -527,6 +540,15 @@ mod tests {
             timezone: "CT",
             pattern: Err(DateOutOfRange(date, _)) if date == "2/29/2021"
         },
+        not_leap_next_year => {
+            now: "2021-12-01T00:00:00Z",
+            date: "2/29",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT",
+            pattern: Err(DateOutOfRange(date, _)) if date == "2/29/2022"
+        },
         too_far_away1 => {
             now: "2021-02-01T00:00:00Z",
             date: "10/1",
@@ -562,6 +584,24 @@ mod tests {
             pm: true,
             timezone: "CT", // CST (UTC-6) on 2/10
             pattern: Err(MaybeRecentPast(date)) if date == "1/30/2021"
+        },
+        recent_past_leap_day => {
+            now: "2020-03-01T10:00:00-06:00",
+            date: "2/29",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/10
+            pattern: Err(MaybeRecentPast(date)) if date == "2/29/2020"
+        },
+        far_away_not_leap_year => {
+            now: "2021-03-01T10:00:00-06:00",
+            date: "2/29",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/10
+            pattern: Err(DateOutOfRange(date, _)) if date == "2/29/2022"
         },
     }
 }
