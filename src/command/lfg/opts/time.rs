@@ -280,6 +280,7 @@ impl TryFrom<DatetimeComponents<'_>> for DateTime<Tz> {
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
+    use test_env_log::test;
     use DatetimeParseError::*;
 
     macro_rules! test_parse {

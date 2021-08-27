@@ -126,6 +126,7 @@ define_activities! {
 mod tests {
     use super::*;
     use itertools::Itertools;
+    use test_env_log::test;
 
     #[test]
     fn no_conflicting_activity_types() {

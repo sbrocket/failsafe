@@ -149,14 +149,15 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crate::event::Event;
     use tempdir::TempDir;
+    use test_env_log::test;
 
     const TEMPDIR_PREFIX: &'static str = "PersistentStore_test";
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_store_name_collisions() {
         let tempdir = TempDir::new(TEMPDIR_PREFIX).unwrap();
         let builder = PersistentStoreBuilder::new(tempdir.path()).await.unwrap();
@@ -171,7 +172,7 @@ mod test {
         assert!(builder.new_scoped("bar").await.is_err());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_store_load() {
         let tempdir = TempDir::new(TEMPDIR_PREFIX).unwrap();
         let builder = PersistentStoreBuilder::new(tempdir.path()).await.unwrap();

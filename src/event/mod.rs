@@ -827,6 +827,7 @@ impl TypeMapKey for EventManager {
 mod tests {
     use super::{Event, *};
     use std::iter;
+    use test_env_log::test;
 
     async fn add_events_to_manager<C: CacheHttp>(
         manager: &EventManager<C>,
@@ -869,7 +870,7 @@ mod tests {
         assert_eq!(event_id(GOS, 128).to_string(), "gos128");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_next_id_advances() {
         let manager = EventManager::default().await;
         assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 1));
@@ -879,7 +880,7 @@ mod tests {
         assert_eq!(manager.next_id(GOS).await.unwrap(), event_id(GOS, 2));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_next_id_gaps() {
         let manager = EventManager::default().await;
         add_events_to_manager(&manager, VOG, (1u8..=20).chain(23u8..=50)).await;
@@ -888,7 +889,7 @@ mod tests {
         assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 51));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_next_id_wraps() {
         let manager = EventManager::default().await;
         add_events_to_manager(&manager, VOG, (1u8..=41).chain(44u8..=255)).await;
@@ -901,7 +902,7 @@ mod tests {
         assert_eq!(manager.next_id(VOG).await.unwrap(), event_id(VOG, 43));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_next_exhausted() {
         let manager = EventManager::default().await;
         add_events_to_manager(&manager, VOG, 1u8..=255).await;
@@ -910,7 +911,7 @@ mod tests {
         assert_eq!(manager.next_id(GOS).await.unwrap(), event_id(GOS, 1));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_create_event() {
         let manager = EventManager::default().await;
         let t = Utc::now().with_timezone(&Tz::PST8PDT);
