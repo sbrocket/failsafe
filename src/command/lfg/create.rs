@@ -136,9 +136,6 @@ async fn create(
         }
     };
 
-    // TODO: Check that the datetime isn't far in the future (>6 months?), likely means misstaken
-    // user input led to bad assumed year.
-
     // Ask for the event description in the main response.
     let content = format!(
         "What's so special about this... *uhhh, \"{}\"?*  ...event?\n\

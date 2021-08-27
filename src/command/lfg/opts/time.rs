@@ -1,7 +1,7 @@
 use crate::{command::OptionType, util::*};
 use chrono::{
     format::{self, StrftimeItems},
-    DateTime, Datelike, Utc,
+    DateTime, Datelike, Duration, TimeZone, Utc,
 };
 use chrono_tz::Tz;
 use lazy_static::lazy_static;
@@ -12,6 +12,7 @@ use std::{
     convert::{TryFrom, TryInto},
 };
 use thiserror::Error;
+use tracing::warn;
 
 define_command_option_group!(
     id: Datetime,
@@ -100,6 +101,10 @@ pub enum DatetimeParseError {
     DateOutOfRange(String, #[source] format::ParseError),
     #[error("{0} today is in the past")]
     TimeHasPassed(String),
+    #[error("{0} is too far in the future")]
+    TooFarAway(String),
+    #[error("{0} is a recent past date")]
+    MaybeRecentPast(String),
     #[error(transparent)]
     OptionError(#[from] OptionError),
     #[error("Missing required option '{0}'")]
@@ -135,6 +140,13 @@ impl DatetimeParseError {
                 "I can't do that, {} today is in the past... *I'm an AI, not a time-traveling Vex*",
                 time
             )),
+            DatetimeParseError::TooFarAway(date) => Some(format!(
+                "I can't do that, {} is too far in the future.",
+                date
+            )),
+            DatetimeParseError::MaybeRecentPast(date) => {
+                Some(format!("I can't do that, {} is in the past.", date))
+            }
             // All other error types are bugs/internal errors.
             _ => None,
         }
@@ -253,9 +265,9 @@ impl TryFrom<DatetimeComponents<'_>> for DateTime<Tz> {
                     if time >= now_time {
                         false
                     } else {
-                        let mut time = time.format("%-I:%M %p ").to_string();
-                        time.push_str(value.timezone_str);
-                        return Err(TimeHasPassed(time));
+                        let mut time_str = time.format("%-I:%M %p ").to_string();
+                        time_str.push_str(value.timezone_str);
+                        return Err(TimeHasPassed(time_str));
                     }
                 }
                 Ordering::Greater => false,
@@ -263,16 +275,63 @@ impl TryFrom<DatetimeComponents<'_>> for DateTime<Tz> {
             Ordering::Greater => false,
         };
         let year = now.year() + if next_year { 1 } else { 0 };
-        parsed
-            .set_year(year.into())
-            .map_err(|err| ParsedRejectedValue("year", year.to_string(), err))?;
+        let datetime =
+            datetime_with_timezone_for_year(parsed.clone(), value.timezone, year.into())?;
 
-        parsed
-            .to_datetime_with_timezone(&value.timezone)
-            .map_err(|err| match err.kind() {
-                format::ParseErrorKind::OutOfRange => DateOutOfRange(value.date.to_owned(), err),
-                _ => DatetimeCreationFailed(err, parsed),
-            })
+        const FUTURE_DATE_LIMIT_WEEKS: i64 = 26;
+        const RECENT_PAST_DATE_DAYS: i64 = 30;
+
+        // Check whether the resulting date is unreasonably far away (arbitrarily chosen as ~6 months or
+        // 26 weeks). If so, return an error. The error is either:
+        //   - that the date is too far in the future or,
+        //   - if using the current year instead makes the date less than a ~month (30 days) ago,
+        //   assume the user meant that and they have the wrong date.
+        let date_str = |dt: DateTime<Tz>| dt.format("%-m/%-d/%-Y").to_string();
+        if datetime - now >= Duration::weeks(FUTURE_DATE_LIMIT_WEEKS) {
+            if next_year {
+                let alternate_datetime =
+                    datetime_with_timezone_for_year(parsed, value.timezone, now.year().into());
+                match alternate_datetime {
+                    Ok(alt) => {
+                        if now - alt <= Duration::days(RECENT_PAST_DATE_DAYS) {
+                            return Err(MaybeRecentPast(date_str(alt)));
+                        }
+                    }
+                    Err(err) => warn!(
+                        "Error checking if alternate date is in recent past: {:?}",
+                        err
+                    ),
+                }
+            }
+
+            return Err(TooFarAway(date_str(datetime)));
+        }
+        Ok(datetime)
+    }
+}
+
+fn datetime_with_timezone_for_year<Tz: TimeZone>(
+    mut parsed: format::Parsed,
+    timezone: Tz,
+    year: i64,
+) -> Result<DateTime<Tz>, DatetimeParseError> {
+    use DatetimeParseError::*;
+
+    parsed
+        .set_year(year.into())
+        .map_err(|err| ParsedRejectedValue("year", year.to_string(), err))?;
+
+    match parsed.to_datetime_with_timezone(&timezone) {
+        Ok(dt) => Ok(dt),
+        Err(err) => Err(match err.kind() {
+            format::ParseErrorKind::OutOfRange => {
+                let month = parsed.month.ok_or_else(|| ParsedMissingValue("month"))?;
+                let day = parsed.day.ok_or_else(|| ParsedMissingValue("day"))?;
+                let year = parsed.year.ok_or_else(|| ParsedMissingValue("year"))?;
+                DateOutOfRange(format!("{}/{}/{}", month, day, year), err)
+            }
+            _ => DatetimeCreationFailed(err, parsed),
+        }),
     }
 }
 
@@ -420,7 +479,7 @@ mod tests {
              hour: 2,
              minute: 30,
              pm: true,
-             timezone: "ET", // EDT (UTC-4) on 4/20
+             timezone: "ET",
              pattern: Err(InvalidDateFormat(date, _)) if date == "4/"
          },
          invalid_date2 => {
@@ -429,7 +488,7 @@ mod tests {
              hour: 2,
              minute: 30,
              pm: true,
-             timezone: "ET", // EDT (UTC-4) on 4/20
+             timezone: "ET",
              pattern: Err(InvalidDateFormat(date, _)) if date == "4-20"
          },
         month_out_of_range => {
@@ -438,8 +497,8 @@ mod tests {
             hour: 8,
             minute: 30,
             pm: true,
-            timezone: "CT", // CST (UTC-6) on 2/29
-            pattern: Err(DateOutOfRange(date, _)) if date == "13/1"
+            timezone: "CT",
+            pattern: Err(DateOutOfRange(date, _)) if date == "13/1/2021"
         },
         day_out_of_range1 => {
             now: "2021-02-01T00:00:00Z",
@@ -447,8 +506,8 @@ mod tests {
             hour: 8,
             minute: 30,
             pm: true,
-            timezone: "CT", // CST (UTC-6) on 2/29
-            pattern: Err(DateOutOfRange(date, _)) if date == "1/32"
+            timezone: "CT",
+            pattern: Err(DateOutOfRange(date, _)) if date == "1/32/2021"
         },
         day_out_of_range2 => {
             now: "2021-02-01T00:00:00Z",
@@ -456,8 +515,8 @@ mod tests {
             hour: 8,
             minute: 30,
             pm: true,
-            timezone: "CT", // CST (UTC-6) on 2/29
-            pattern: Err(DateOutOfRange(date, _)) if date == "4/31"
+            timezone: "CT",
+            pattern: Err(DateOutOfRange(date, _)) if date == "4/31/2021"
         },
         not_leap_year => {
             now: "2021-02-01T00:00:00Z",
@@ -465,8 +524,44 @@ mod tests {
             hour: 8,
             minute: 30,
             pm: true,
-            timezone: "CT", // CST (UTC-6) on 2/29
-            pattern: Err(DateOutOfRange(date, _)) if date == "2/29"
+            timezone: "CT",
+            pattern: Err(DateOutOfRange(date, _)) if date == "2/29/2021"
+        },
+        too_far_away1 => {
+            now: "2021-02-01T00:00:00Z",
+            date: "10/1",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT",
+            pattern: Err(TooFarAway(date)) if date == "10/1/2021"
+        },
+        too_far_away2 => {
+            now: "2021-10-01T00:00:00Z",
+            date: "6/1",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT",
+            pattern: Err(TooFarAway(date)) if date == "6/1/2022"
+        },
+        recent_past1 => {
+            now: "2021-02-10T10:00:00-06:00",
+            date: "2/9",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/10
+            pattern: Err(MaybeRecentPast(date)) if date == "2/9/2021"
+        },
+        recent_past2 => {
+            now: "2021-02-10T10:00:00-06:00",
+            date: "1/30",
+            hour: 1,
+            minute: 0,
+            pm: true,
+            timezone: "CT", // CST (UTC-6) on 2/10
+            pattern: Err(MaybeRecentPast(date)) if date == "1/30/2021"
         },
     }
 }

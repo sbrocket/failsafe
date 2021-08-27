@@ -126,9 +126,6 @@ impl EditType {
                     }
                 };
 
-                // TODO: Check that the datetime isn't far in the future (>6 months?), likely means misstaken
-                // user input led to bad assumed year.
-
                 return Ok(EditType::Datetime(datetime));
             }
             _ => {}
