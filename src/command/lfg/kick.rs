@@ -79,7 +79,7 @@ async fn lfg_kick(
                 "Removed {} from the {} event at {}",
                 user_mention,
                 event.activity,
-                event.formatted_datetime()
+                event.timestamp()
             ),
             Err(_) => format!(
                 "*Errr, Captain, you can't kick {} because they aren't in that event...*",

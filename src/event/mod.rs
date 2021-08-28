@@ -264,8 +264,9 @@ impl Event {
         Ok(())
     }
 
-    pub fn formatted_datetime(&self) -> String {
-        self.datetime.format("%-I:%M %p %Z %-m/%-d").to_string()
+    pub fn timestamp(&self) -> String {
+        let timestamp = self.datetime.timestamp();
+        format!("<t:{0}:d><t:{0}:t> (<t:{0}:R>)", timestamp)
     }
 
     fn confirmed_groups(&self) -> Vec<Vec<(&EventMember, bool)>> {
@@ -296,7 +297,7 @@ impl Event {
 
     pub fn as_embed(&self) -> CreateEmbed {
         let mut embed = CreateEmbed::default();
-        let mut start_time = self.formatted_datetime();
+        let mut start_time = self.timestamp();
         if self.recur {
             start_time.push_str("\nRecurs weekly");
         }
@@ -306,8 +307,7 @@ impl Event {
             .field("Event ID", self.id, true)
             .field("Description", self.description.clone(), false)
             .color(Color::DARK_GOLD)
-            .footer(|f| f.text(format!("Creator | {} | Your Time", self.creator.name)))
-            .timestamp(&self.datetime.with_timezone(&Utc));
+            .footer(|f| f.text(format!("Creator | {}", self.creator.name)));
 
         self.confirmed_groups()
             .into_iter()

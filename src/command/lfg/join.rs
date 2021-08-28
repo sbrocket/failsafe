@@ -122,7 +122,7 @@ pub async fn join(
                 "Added {} to the {} event at {} as **{}**!",
                 user_str,
                 event.activity,
-                event.formatted_datetime(),
+                event.timestamp(),
                 kind,
             ),
             Err(_) => "You're already in that event!".to_owned(),

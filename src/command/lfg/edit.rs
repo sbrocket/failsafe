@@ -154,11 +154,7 @@ impl EditType {
         match self {
             EditType::Datetime(Ok(datetime)) => {
                 event.set_datetime(datetime);
-                format!(
-                    "Event **{}** updated to {}",
-                    event.id,
-                    event.formatted_datetime()
-                )
+                format!("Event **{}** updated to {}", event.id, event.timestamp())
             }
             EditType::Description(Some(descr)) => {
                 event.description = descr;

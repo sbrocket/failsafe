@@ -52,7 +52,7 @@ pub async fn leave(
             Ok(()) => format!(
                 "Removed you from the {} event at {}",
                 event.activity,
-                event.formatted_datetime()
+                event.timestamp()
             ),
             Err(_) => {
                 "*Hey, you're not even in that event... did you think I'd forget?*".to_owned()
