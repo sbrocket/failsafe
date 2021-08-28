@@ -1,6 +1,6 @@
+use crate::{event::EventManager, guild::GuildManager};
 use anyhow::{format_err, Result};
 use rand::{distributions::Alphanumeric, prelude::*};
-use serde_json::Value;
 use serenity::{
     async_trait,
     builder::{CreateComponents, CreateEmbed},
@@ -10,7 +10,6 @@ use serenity::{
         interactions::{
             application_command::{
                 ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
-                ApplicationCommandInteractionDataOptionValue as OptionValue,
             },
             message_component::MessageComponentInteraction,
         },
@@ -22,7 +21,7 @@ use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use thiserror::Error;
 use tokio::fs::File;
 
-use crate::{event::EventManager, guild::GuildManager};
+pub use serenity::model::interactions::application_command::ApplicationCommandInteractionDataOptionValue as OptionValue;
 
 const EPHEMERAL_FLAG: InteractionApplicationCommandCallbackDataFlags =
     InteractionApplicationCommandCallbackDataFlags::EPHEMERAL;
@@ -206,25 +205,10 @@ pub enum OptionError {
 }
 
 pub trait OptionsExt {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>, OptionError>;
-
     fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>, OptionError>;
 }
 
 impl OptionsExt for &Vec<ApplicationCommandInteractionDataOption> {
-    fn get_value(&self, name: impl AsRef<str>) -> Result<Option<&Value>, OptionError> {
-        let name = name.as_ref();
-        let option = if let Some(option) = self.iter().find(|opt| opt.name == name) {
-            option
-        } else {
-            return Ok(None);
-        };
-        option.value.as_ref().map_or_else(
-            || Err(OptionError::MissingValue(name.to_owned())),
-            |v| Ok(Some(v)),
-        )
-    }
-
     fn get_resolved(&self, name: impl AsRef<str>) -> Result<Option<&OptionValue>, OptionError> {
         let name = name.as_ref();
         let option = if let Some(option) = self.iter().find(|opt| opt.name == name) {

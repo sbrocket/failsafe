@@ -10,12 +10,10 @@ use crate::{
 use anyhow::{format_err, Context as _, Error, Result};
 use chrono::DateTime;
 use chrono_tz::Tz;
-use serde_json::Value;
 use serenity::{
     client::Context,
     model::interactions::application_command::{
         ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
-        ApplicationCommandInteractionDataOptionValue as OptionValue,
     },
 };
 use std::convert::TryFrom;
@@ -185,8 +183,8 @@ async fn lfg_edit(
     options: &Vec<ApplicationCommandInteractionDataOption>,
     option_name: &str,
 ) -> Result<()> {
-    let event_id = match options.get_value("event_id")? {
-        Some(Value::String(v)) => Ok(v),
+    let event_id = match options.get_resolved("event_id")? {
+        Some(OptionValue::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
         None => Err(format_err!("Missing required event_id value")),
     }?;

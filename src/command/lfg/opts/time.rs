@@ -5,7 +5,6 @@ use chrono::{
 };
 use chrono_tz::Tz;
 use lazy_static::lazy_static;
-use serde_json::Value;
 use std::fmt::Write;
 use std::{
     cmp::Ordering,
@@ -115,9 +114,9 @@ pub enum DatetimeParseError {
     #[error("Missing required option '{0}'")]
     MissingRequiredOption(&'static str),
     #[error("Unexpected value type for option '{0}': {1:?}")]
-    UnexpectedValueType(&'static str, Value),
+    UnexpectedValueType(&'static str, OptionValue),
     #[error("Unexpected value for option '{0}': {1:?}")]
-    UnexpectedValue(&'static str, Value),
+    UnexpectedValue(&'static str, String),
     #[error("Parsed rejected '{0}' value '{1}' unexpectedly: {2}")]
     ParsedRejectedValue(&'static str, String, #[source] format::ParseError),
     #[error("Parsed missing '{0}' value that should have already been parsed")]
@@ -164,42 +163,38 @@ pub fn parse_datetime_options<O: OptionsExt>(
 ) -> Result<DateTime<Tz>, DatetimeParseError> {
     use DatetimeParseError::*;
 
-    let date = match options.get_value("date")? {
-        Some(Value::String(v)) => Ok(v),
+    let date = match options.get_resolved("date")? {
+        Some(OptionValue::String(v)) => Ok(v),
         Some(v) => Err(UnexpectedValueType("date", v.clone())),
         None => Err(MissingRequiredOption("date")),
     }?;
-    let hour = match options.get_value("hour")? {
-        Some(Value::Number(num)) => num
-            .as_i64()
-            .ok_or_else(|| UnexpectedValue("hour", Value::Number(num.clone()))),
+    let hour = match options.get_resolved("hour")? {
+        Some(OptionValue::Integer(num)) => Ok(*num),
         Some(v) => Err(UnexpectedValueType("hour", v.clone())),
         None => Err(MissingRequiredOption("hour")),
     }?;
-    let minute = match options.get_value("minute")? {
-        Some(Value::Number(num)) => num
-            .as_i64()
-            .ok_or_else(|| UnexpectedValue("minute", Value::Number(num.clone()))),
+    let minute = match options.get_resolved("minute")? {
+        Some(OptionValue::Integer(num)) => Ok(*num),
         Some(v) => Err(UnexpectedValueType("minute", v.clone())),
         None => Err(MissingRequiredOption("minute")),
     }?;
-    let pm = match options.get_value("ampm")? {
-        Some(Value::String(v)) => match v.as_str() {
+    let pm = match options.get_resolved("ampm")? {
+        Some(OptionValue::String(v)) => match v.as_str() {
             "AM" => Ok(false),
             "PM" => Ok(true),
-            _ => Err(UnexpectedValue("ampm", Value::String(v.clone()))),
+            _ => Err(UnexpectedValue("ampm", v.to_owned())),
         },
         Some(v) => Err(UnexpectedValueType("ampm", v.clone())),
         None => Err(MissingRequiredOption("ampm")),
     }?;
-    let timezone_str = match options.get_value("timezone")? {
-        Some(Value::String(v)) => Ok(v),
+    let timezone_str = match options.get_resolved("timezone")? {
+        Some(OptionValue::String(v)) => Ok(v),
         Some(v) => Err(UnexpectedValueType("timezone", v.clone())),
         None => Err(MissingRequiredOption("timezone")),
     }?;
     let timezone = *TIMEZONE_MAP
         .get(timezone_str.as_str())
-        .ok_or_else(|| UnexpectedValue("timezone", Value::String(timezone_str.clone())))?;
+        .ok_or_else(|| UnexpectedValue("timezone", timezone_str.to_owned()))?;
 
     DatetimeComponents {
         now: Utc::now(),

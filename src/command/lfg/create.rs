@@ -8,12 +8,10 @@ use crate::{
 use anyhow::{format_err, Context as _, Result};
 use lazy_static::lazy_static;
 use paste::paste;
-use serde_json::Value;
 use serenity::{
     client::Context,
     model::interactions::application_command::{
         ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
-        ApplicationCommandInteractionDataOptionValue as OptionValue,
     },
 };
 use tracing::{debug, error};
@@ -106,8 +104,8 @@ async fn lfg_create(
     interaction: &ApplicationCommandInteraction,
     options: &Vec<ApplicationCommandInteractionDataOption>,
 ) -> Result<()> {
-    let activity = match options.get_value("activity")? {
-        Some(Value::String(v)) => Ok(v),
+    let activity = match options.get_resolved("activity")? {
+        Some(OptionValue::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
         None => Err(format_err!("Missing required activity value")),
     }?;

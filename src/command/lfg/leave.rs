@@ -1,7 +1,6 @@
 use super::{edit_event_from_str, opts};
 use crate::util::*;
 use anyhow::{format_err, Result};
-use serde_json::Value;
 use serenity::{
     client::Context,
     model::{
@@ -31,8 +30,8 @@ async fn lfg_leave(
         .member
         .as_ref()
         .ok_or_else(|| format_err!("Interaction not in a guild"))?;
-    let event_id = match options.get_value("event_id")? {
-        Some(Value::String(v)) => Ok(v),
+    let event_id = match options.get_resolved("event_id")? {
+        Some(OptionValue::String(v)) => Ok(v),
         Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
         None => Err(format_err!("Missing required event_id value")),
     }?;
