@@ -13,9 +13,18 @@ use serenity::{
     client::Context,
     model::interactions::application_command::{
         ApplicationCommandInteraction, ApplicationCommandInteractionDataOption,
+        ApplicationCommandInteractionDataOptionValue as OptionValue,
     },
 };
 use tracing::{debug, error};
+
+define_command_option!(
+    id: RecurOpt,
+    name: "recur",
+    description: "Enable weekly recurrence for this event?",
+    required: false,
+    option_type: OptionType::Boolean,
+);
 
 // Macro to create the individual leaf commands for each ActivityType. An "activity" option is added
 // to the command depending on whether the ActivityType has a single Activity or not.
@@ -27,7 +36,7 @@ macro_rules! define_create_command {
                 $cmd,
                 concat!("Create a new ", $name, " event"),
                 lfg_create,
-                options: [ [<ActivityOpt $enum_name>], opts::time::Datetime ],
+                options: [ [<ActivityOpt $enum_name>], opts::time::Datetime, RecurOpt ],
             );
 
             define_command_option!(
@@ -54,7 +63,7 @@ macro_rules! define_create_command {
                 $cmd,
                 concat!("Create a new ", $name, " event"),
                 [<lfg_create_ $enum_name:lower>],
-                options: [ opts::time::Datetime ],
+                options: [ opts::time::Datetime, RecurOpt ],
             );
 
             // For ActivityTypes with a single Activity, create a command handler that just passes
@@ -119,6 +128,12 @@ async fn create(
         .as_ref()
         .ok_or_else(|| format_err!("Interaction not in a guild"))?;
 
+    let recur = match options.get_resolved("recur")? {
+        None => Ok(false),
+        Some(OptionValue::Boolean(recur)) => Ok(*recur),
+        Some(v) => Err(format_err!("Unexpected value type: {:?}", v)),
+    }?;
+
     // Parse the datetime options.
     let datetime = match opts::time::parse_datetime_options(options) {
         Ok(datetime) => datetime,
@@ -151,7 +166,7 @@ async fn create(
     // Create the event!
     let event_manager = ctx.get_event_manager(interaction).await?;
     let event = match event_manager
-        .create_event(member, activity, datetime, description)
+        .create_event(member, activity, datetime, description, recur)
         .await
     {
         Ok(event) => event,

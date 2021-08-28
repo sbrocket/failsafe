@@ -597,6 +597,7 @@ impl<C: CacheHttp> EventManager<C> {
         activity: Activity,
         datetime: DateTime<Tz>,
         description: impl Into<String>,
+        recur: bool,
     ) -> Result<Arc<Event>> {
         let mut state = self.state.write().await;
         let id = state.next_id(activity)?;
@@ -608,7 +609,7 @@ impl<C: CacheHttp> EventManager<C> {
             datetime,
             description,
             group_size: activity.default_group_size(),
-            recur: false,
+            recur,
             creator: creator.clone(),
             confirmed: vec![creator],
             alternates: vec![],
@@ -917,15 +918,27 @@ mod tests {
         let t = Utc::now().with_timezone(&Tz::PST8PDT);
         let user = User::default();
         assert_eq!(
-            manager.create_event(&user, VOG, t, "").await.unwrap().id,
+            manager
+                .create_event(&user, VOG, t, "", false)
+                .await
+                .unwrap()
+                .id,
             event_id(VOG, 1)
         );
         assert_eq!(
-            manager.create_event(&user, VOG, t, "").await.unwrap().id,
+            manager
+                .create_event(&user, VOG, t, "", false)
+                .await
+                .unwrap()
+                .id,
             event_id(VOG, 2)
         );
         assert_eq!(
-            manager.create_event(&user, GOS, t, "").await.unwrap().id,
+            manager
+                .create_event(&user, GOS, t, "", false)
+                .await
+                .unwrap()
+                .id,
             event_id(GOS, 1)
         );
     }
