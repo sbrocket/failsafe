@@ -1,6 +1,6 @@
 [package]
 name = "failsafe"
-version = "0.10.0"
+version = "1.0.0"
 authors = ["Bryan Henry <bryanhenry522@gmail.com>"]
 edition = "2018"
 
