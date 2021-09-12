@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "failsafe"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "assert_matches",
