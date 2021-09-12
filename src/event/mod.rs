@@ -345,7 +345,7 @@ impl Event {
             .pad_using(1, |_| "None".to_owned())
             .join(", ");
         embed
-            .field("Alternates", alt_names, true)
+            .field("Spare Alts", alt_names, true)
             .field("Maybe", maybe_names, true);
 
         embed
