@@ -266,7 +266,7 @@ impl Event {
 
     pub fn timestamp(&self) -> String {
         let timestamp = self.datetime.timestamp();
-        format!("<t:{0}:d><t:{0}:t> (<t:{0}:R>)", timestamp)
+        format!("<t:{0}:F> (<t:{0}:R>)", timestamp)
     }
 
     fn confirmed_groups(&self) -> Vec<Vec<(&EventMember, bool)>> {
