@@ -114,7 +114,7 @@ define_activities! {
     Gambit: ("Gambit", "gambit", Gambit, 4),
     Grandmaster: ("Grandmaster Nightfall", "gm", PvE, 3),
     Nightfall: ("Nightfall", "nf", PvE, 3),
-    Wellspring: ("Wellspring", "pve", PvE, 6),
+    Wellspring: ("Wellspring", "well", PvE, 6),
     Harbinger: ("Harbinger", "harb", PvE, 3),
     Presage: ("Presage", "pres", PvE, 3),
     Story: ("Story Missions", "story", PvE, 3),
