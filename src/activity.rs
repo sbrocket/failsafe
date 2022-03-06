@@ -96,10 +96,12 @@ macro_rules! define_activities {
 }
 
 define_activities! {
+    VowOfTheDisciple: ("Vow of the Disciple", "votd", Raid, 6),
     VaultOfGlass: ("Vault of Glass", "vog", Raid, 6),
     DeepStoneCrypt: ("Deep Stone Crypt", "dsc", Raid, 6),
     GardenOfSalvation: ("Garden of Salvation", "gos", Raid, 6),
     LastWish: ("Last Wish", "lw", Raid, 6),
+    GraspOfAvarice: ("GraspOfAvarice", "goa", Dungeon, 3),
     Prophecy: ("Prophecy", "proph", Dungeon, 3),
     PitOfHeresy: ("Pit of Heresy", "pit", Dungeon, 3),
     ShatteredThrone: ("Shattered Throne", "throne", Dungeon, 3),
@@ -112,6 +114,7 @@ define_activities! {
     Gambit: ("Gambit", "gambit", Gambit, 4),
     Grandmaster: ("Grandmaster Nightfall", "gm", PvE, 3),
     Nightfall: ("Nightfall", "nf", PvE, 3),
+    Wellspring: ("Wellspring", "well", PvE, 6),
     Harbinger: ("Harbinger", "harb", PvE, 3),
     Presage: ("Presage", "pres", PvE, 3),
     Story: ("Story Missions", "story", PvE, 3),
