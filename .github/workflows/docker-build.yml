@@ -31,13 +31,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
 
+      # This toolchain isn't actually used; the Dockerfile installs the toolchain used. This step produces a cache key for the latest rustc version.
+      - name: Install latest stable
+        id: toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
       - name: Cache Docker layers
         uses: actions/cache@v2
         with:
           path: /tmp/.buildx-cache
           # TODO: Include rustc hash in cache key, need to make sure same as Dockerfile is using
-          key: ${{ runner.os }}-buildx-${{ hashFiles('**/Cargo.toml') }}-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-${{ steps.toolchain.outputs.rustc_hash }}-${{ hashFiles('**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-buildx-${{ steps.toolchain.outputs.rustc_hash }}-
             ${{ runner.os }}-buildx-${{ hashFiles('**/Cargo.toml') }}-
             ${{ runner.os }}-buildx-
 
