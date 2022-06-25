@@ -101,6 +101,7 @@ define_activities! {
     DeepStoneCrypt: ("Deep Stone Crypt", "dsc", Raid, 6),
     GardenOfSalvation: ("Garden of Salvation", "gos", Raid, 6),
     LastWish: ("Last Wish", "lw", Raid, 6),
+    Duality: ("Duality", "dual", Dungeon, 3),
     GraspOfAvarice: ("GraspOfAvarice", "goa", Dungeon, 3),
     Prophecy: ("Prophecy", "proph", Dungeon, 3),
     PitOfHeresy: ("Pit of Heresy", "pit", Dungeon, 3),
