@@ -85,8 +85,7 @@ async fn main() {
         {
             env_filter =
                 EnvFilter::from_default_env().add_directive("tokio=trace".parse().unwrap());
-            let (console_layer, server) = console_subscriber::TasksLayer::new();
-            tokio::spawn(server.serve());
+            let console_layer = console_subscriber::spawn();
             registry.with(console_layer)
         }
         #[cfg(not(feature = "tokio-console"))]
@@ -96,8 +95,7 @@ async fn main() {
         }
     }
     .with(env_filter)
-    .try_init()
-    .expect("Failed to setup tracing subscriber");
+    .init();
 
     let token = std::env::var("DISCORD_BOT_TOKEN").expect("Missing $DISCORD_BOT_TOKEN");
     let app_id = std::env::var("DISCORD_APP_ID")
