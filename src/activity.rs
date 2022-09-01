@@ -96,6 +96,7 @@ macro_rules! define_activities {
 }
 
 define_activities! {
+    KingsFall: ("King's Fall", "kf", Raid, 6),
     VowOfTheDisciple: ("Vow of the Disciple", "votd", Raid, 6),
     VaultOfGlass: ("Vault of Glass", "vog", Raid, 6),
     DeepStoneCrypt: ("Deep Stone Crypt", "dsc", Raid, 6),
