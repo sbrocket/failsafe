@@ -5,7 +5,7 @@ authors = ["Bryan Henry <bryanhenry522@gmail.com>"]
 edition = "2021"
 
 [features]
-tokio-console = ["console-subscriber", "tracing-subscriber/registry"]
+tokio-console = ["console-subscriber", "tokio/tracing"]
 
 [dependencies]
 anyhow = "1.0"
@@ -28,7 +28,7 @@ thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
 toml = "0.5"
 tracing = "0.1"
-tracing-subscriber = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_matches = "1.5"
@@ -45,6 +45,4 @@ version = "0.10.9"
 
 [dependencies.console-subscriber]
 optional = true
-# console-subscriber is not yet published to crates.io, pin to a specific git revision
-git = "https://github.com/tokio-rs/console"
-rev = "52601b847780bb21e00cbac698f60de995dcc1d1"
+version = "0.1"
